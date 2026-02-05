@@ -615,35 +615,27 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 								})
 							]
 
-							// Separator
+							// Spacer
 							+ SHorizontalBox::Slot()
-							.AutoWidth()
-							.Padding(8, 0, 8, 0)
+							.FillWidth(1.0f)
 							[
-								SNew(SBox)
-								.WidthOverride(1)
-								[
-									SNew(SBorder)
-									.BorderImage(FAppStyle::GetBrush("WhiteBrush"))
-									.BorderBackgroundColor(FLinearColor(0.2f, 0.2f, 0.2f, 0.5f))
-								]
+								SNew(SSpacer)
 							]
 
 							// Hide Engine Internal Nodes checkbox
 							+ SHorizontalBox::Slot()
 							.AutoWidth()
-							.Padding(4, 0, 0, 0)
+							.Padding(8, 0, 0, 0)
 							.VAlign(VAlign_Center)
+							.HAlign(HAlign_Left)
 							[
 								SNew(SCheckBox)
 								.IsChecked(ECheckBoxState::Checked)
-								.Style(FAppStyle::Get(), "Widget.CheckBox")
 								.OnCheckStateChanged(this, &SBlueprintProfilerWidget::OnHideEngineNodesChanged)
 								[
 									SNew(STextBlock)
 									.Text(LOCTEXT("HideEngineNodes", "隐藏引擎内部节点"))
 									.ToolTipText(LOCTEXT("HideEngineNodesTooltip", "过滤掉引擎内置宏节点（如For Loop、While Loop等）的内部实现，只显示你自己的业务逻辑"))
-									.Font(FAppStyle::Get().GetFontStyle("CheckBox.Font"))
 								]
 							]
 						]
