@@ -643,92 +643,139 @@ void FStaticLinter::DetectOrphanNodes(UBlueprint* Blueprint, TArray<FLintIssue>&
 			{
 				if (K2Node->IsNodePure())
 				{
-					bool bHasOutputConnections = false;
-					bool bHasInputConnections = false;
+					// 获取节点标题
+					FString NodeTitle = K2Node->GetNodeTitle(ENodeTitleType::ListView).ToString();
 
-					// Check all pins for connections
+					// 跳过特殊的纯节点（不需要输出连接）
+					// 1. 变更路线节点（Set Return Value）- 特殊的纯节点
+					if (NodeTitle.Contains(TEXT("变更路线")) ||
+						NodeTitle.Contains(TEXT("Set Return")) ||
+						NodeTitle.Contains(TEXT("Return")) ||
+						NodeTitle.Contains(TEXT("返回")))
+					{
+						continue;
+					}
+
+					// 2. 字面量和常量节点
+					FString NodeClass = K2Node->GetClass()->GetName();
+					if (NodeClass.Contains(TEXT("Literal")) ||
+						NodeClass.Contains(TEXT("Constant")))
+					{
+						continue;
+					}
+
+					// 3. 工具节点（Make, Select, Branch 等）
+					if (NodeTitle.Contains(TEXT("Make")) ||
+						NodeTitle.Contains(TEXT("Select")) ||
+						NodeTitle.Contains(TEXT("Branch")) ||
+						NodeTitle.Contains(TEXT("Break")) ||
+						NodeTitle.Contains(TEXT("Append")))
+					{
+						continue;
+					}
+
+					bool bHasDataOutputConnections = false;
+
+					// Check data output pins for connections (ignore exec pins for pure nodes)
 					for (UEdGraphPin* Pin : K2Node->Pins)
 					{
-						if (Pin && Pin->Direction == EGPD_Output && Pin->LinkedTo.Num() > 0)
+						if (Pin && Pin->Direction == EGPD_Output &&
+							Pin->PinType.PinCategory != UEdGraphSchema_K2::PC_Exec &&
+							Pin->LinkedTo.Num() > 0)
 						{
-							bHasOutputConnections = true;
-						}
-						else if (Pin && Pin->Direction == EGPD_Input && Pin->LinkedTo.Num() > 0)
-						{
-							bHasInputConnections = true;
+							bHasDataOutputConnections = true;
+							break;
 						}
 					}
 
-					// Only report if node has NO connections at all (both input and output disconnected)
-					// This is a much stricter check to avoid false positives
-					if (!bHasOutputConnections && !bHasInputConnections)
+					// Report if pure node has no data output connections
+					if (!bHasDataOutputConnections)
 					{
-						// Skip constant nodes and utility nodes that don't need connections
-						FString NodeClass = K2Node->GetClass()->GetName();
-						FString NodeTitle = K2Node->GetNodeTitle(ENodeTitleType::ListView).ToString();
-
-						// Skip nodes that are typically standalone
-						if (NodeClass.Contains(TEXT("Literal")) ||
-							NodeClass.Contains(TEXT("Constant")) ||
-							NodeTitle.Contains(TEXT("Make")) ||  // Make nodes are typically standalone
-							NodeTitle.Contains(TEXT("Select")) ||  // Select nodes are typically standalone
-							NodeTitle.Contains(TEXT("Branch"))) // Branch nodes are standalone
-						{
-							continue;
-						}
-
 						FLintIssue Issue;
 						Issue.Type = ELintIssueType::OrphanNode;
 						Issue.BlueprintPath = Blueprint->GetPathName();
 						Issue.NodeName = NodeTitle;
-						Issue.Description = FString::Printf(TEXT("纯节点 '%s' 没有任何连接"), *Issue.NodeName);
+						Issue.Description = FString::Printf(TEXT("纯节点 '%s' 的输出没有连接到任何节点"), *Issue.NodeName);
 						Issue.Severity = ESeverity::Low; // 孤立节点不是严重问题
 						Issue.NodeGuid = K2Node->NodeGuid;
 
 						OutIssues.Add(Issue);
 					}
 				}
-			}
-			// Check for non-pure nodes with execution pins but no connections
-			else
-			{
-				bool bHasAnyConnections = false;
-				bool bHasExecutionPins = false;
-
-				for (UEdGraphPin* Pin : Node->Pins)
+				// Check for nodes with execution pins (non-pure nodes)
+				else
 				{
-					if (Pin)
-					{
-						// Check for execution pins
-						if (Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec)
-						{
-							bHasExecutionPins = true;
-						}
+					// 首先检查是否应该跳过此节点（在检查引脚连接之前）
+					FString NodeTitle = Node->GetNodeTitle(ENodeTitleType::ListView).ToString();
+					bool bShouldSkip = false;
 
-						// Check for any connections
-						if (Pin->LinkedTo.Num() > 0)
-						{
-							bHasAnyConnections = true;
-						}
+					// 1. 跳过 Event 和 CustomEvent（入口节点）
+					if (Node->IsA<UK2Node_Event>() || Node->IsA<UK2Node_CustomEvent>())
+					{
+						bShouldSkip = true;
 					}
-				}
-
-				// Only report if it has execution pins but completely disconnected
-				if (bHasExecutionPins && !bHasAnyConnections)
-				{
-					// Skip certain node types that are OK to be disconnected
-					if (!Node->IsA<UK2Node_Event>() &&
-						!Node->IsA<UK2Node_CustomEvent>())
+					// 2. 跳过构造脚本节点（按标题判断）
+					else if (NodeTitle.Contains(TEXT("构造脚本")) ||
+						NodeTitle.Contains(TEXT("Construction Script")))
 					{
-						FLintIssue Issue;
-						Issue.Type = ELintIssueType::OrphanNode;
-						Issue.BlueprintPath = Blueprint->GetPathName();
-						Issue.NodeName = Node->GetNodeTitle(ENodeTitleType::ListView).ToString();
-						Issue.Description = FString::Printf(TEXT("执行节点 '%s' 有执行引脚但没有连接"), *Issue.NodeName);
-						Issue.Severity = ESeverity::Medium;
-						Issue.NodeGuid = Node->NodeGuid;
+						bShouldSkip = true;
+					}
+					// 3. 跳过接口相关节点（通常是输入事件或增强输入节点）
+					// 这些节点名称通常包含特定关键词
+					else if (NodeTitle.Contains(TEXT("Thumbstick")) ||
+						NodeTitle.Contains(TEXT("Touch")) ||
+						NodeTitle.Contains(TEXT("Input Action")) ||
+						NodeTitle.Contains(TEXT("Input Axis")) ||
+						NodeTitle.Contains(TEXT("Enhanced Input")) ||
+						NodeTitle.Contains(TEXT("IA_")) ||  // Input Action 缩写
+						NodeTitle.Contains(TEXT("IM_")))    // Input Modifier 缩写
+					{
+						bShouldSkip = true;
+					}
 
-						OutIssues.Add(Issue);
+					// 如果不应该跳过，再检查执行引脚连接状态
+					if (!bShouldSkip)
+					{
+						bool bHasExecInputConnected = false;
+						bool bHasExecOutputConnected = false;
+						bool bHasExecutionPins = false;
+
+						// 检查所有执行引脚的连接状态
+						for (UEdGraphPin* Pin : Node->Pins)
+						{
+							if (Pin && Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec)
+							{
+								bHasExecutionPins = true;
+								if (Pin->Direction == EGPD_Input && Pin->LinkedTo.Num() > 0)
+								{
+									bHasExecInputConnected = true;
+								}
+								else if (Pin->Direction == EGPD_Output && Pin->LinkedTo.Num() > 0)
+								{
+									bHasExecOutputConnected = true;
+								}
+							}
+						}
+
+						// 只有当执行引脚完全未连接（既没有输入连接也没有输出连接）时才报告
+						// 这会正确跳过：
+						// - Event 节点（没有输入但有输出）
+						// - Set Return Value 节点（可能有输入但没有输出）
+						// - 其他正常连接的节点
+						// 但会检测到：
+						// - 完全未连接的孤立节点（如未连接的打印节点）
+						if (bHasExecutionPins && !bHasExecInputConnected && !bHasExecOutputConnected)
+						{
+							FLintIssue Issue;
+							Issue.Type = ELintIssueType::OrphanNode;
+							Issue.BlueprintPath = Blueprint->GetPathName();
+							Issue.NodeName = NodeTitle;
+							Issue.Description = FString::Printf(TEXT("执行节点 '%s' 未连接到任何执行流程（孤立节点）"), *Issue.NodeName);
+							Issue.Severity = ESeverity::High;
+							Issue.NodeGuid = K2Node->NodeGuid;
+
+							OutIssues.Add(Issue);
+						}
 					}
 				}
 			}

@@ -26,13 +26,17 @@
 #include "Misc/FileHelper.h"
 #include "Framework/Application/SlateApplication.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "Misc/DefaultValueHelper.h"
+#include "Containers/Ticker.h"
 
 #define LOCTEXT_NAMESPACE "SBlueprintProfilerWidget"
 
 void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 {
-	// Initialize analyzers
-	RuntimeProfiler = MakeShared<FRuntimeProfiler>();
+	// Initialize analyzers - RuntimeProfiler is a singleton
+	RuntimeProfiler = TSharedPtr<FRuntimeProfiler>(&FRuntimeProfiler::Get(), [](FRuntimeProfiler*) {
+		// No-op deleter since RuntimeProfiler is a singleton
+	});
 	StaticLinter = MakeShared<FStaticLinter>();
 	MemoryAnalyzer = MakeShared<FMemoryAnalyzer>();
 
@@ -68,6 +72,15 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 	// Bind analyzer events
 	StaticLinter->OnScanComplete.AddSP(this, &SBlueprintProfilerWidget::OnStaticScanComplete);
 	StaticLinter->OnScanProgress.AddSP(this, &SBlueprintProfilerWidget::OnStaticScanProgress);
+
+	// 绑定 PIE 结束事件（自动停止录制时刷新数据）
+	FEditorDelegates::EndPIE.AddSP(this, &SBlueprintProfilerWidget::OnPIEEnd);
+
+	// 注册 UI 刷新定时器（每 0.5 秒刷新一次，确保 PIE 自动开始录制时 UI 能正确更新）
+	UIRefreshTickerHandle = FTSTicker::GetCoreTicker().AddTicker(
+		FTickerDelegate::CreateRaw(this, &SBlueprintProfilerWidget::TickUIRefresh),
+		0.5f  // 0.5 秒间隔
+	);
 
 	ChildSlot
 	[
@@ -239,6 +252,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 						.Padding(0, 2)
 						[
 							SAssignNew(AutoStartPIECheckBox, SCheckBox)
+							.IsChecked(RuntimeProfiler.IsValid() && RuntimeProfiler->GetAutoStartOnPIE() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
 							.Content()
 							[
 								SNew(STextBlock)
@@ -253,13 +267,13 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 								}
 							})
 						]
-						
+
 						+ SVerticalBox::Slot()
 						.AutoHeight()
 						.Padding(0, 2)
 						[
 							SAssignNew(AutoStopPIECheckBox, SCheckBox)
-							.IsChecked(ECheckBoxState::Checked) // Default to enabled
+							.IsChecked(RuntimeProfiler.IsValid() && RuntimeProfiler->GetAutoStopOnPIEEnd() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
 							.Content()
 							[
 								SNew(STextBlock)
@@ -736,15 +750,15 @@ void SBlueprintProfilerWidget::SetRuntimeData(const TArray<FNodeExecutionData>& 
 	{
 		return Item.IsValid() && Item->Type == EProfilerDataType::Runtime;
 	});
-	
+
 	// Add new runtime data
 	for (const FNodeExecutionData& ExecutionData : Data)
 	{
 		AllDataItems.Add(CreateDataItemFromRuntimeData(ExecutionData));
 	}
-	
+
 	UpdateFilteredData();
-	
+
 	if (DataListView.IsValid())
 	{
 		DataListView->RequestListRefresh();
@@ -2287,27 +2301,33 @@ void SBlueprintProfilerWidget::JumpToNode(TSharedPtr<FProfilerDataItem> Item)
 // Button state methods
 bool SBlueprintProfilerWidget::CanStartRecording() const
 {
-	return CurrentRecordingState == ERecordingState::Stopped && RuntimeProfiler.IsValid();
+	// 直接查询 Profiler 的实际状态，而不是使用缓存的 CurrentRecordingState
+	// 这确保 PIE 自动开始录制时，按钮状态能正确更新
+	return RuntimeProfiler.IsValid() && !RuntimeProfiler->IsRecording() && !RuntimeProfiler->IsPaused();
 }
 
 bool SBlueprintProfilerWidget::CanStopRecording() const
 {
-	return (CurrentRecordingState == ERecordingState::Recording || CurrentRecordingState == ERecordingState::Paused) && RuntimeProfiler.IsValid();
+	// 直接查询 Profiler 的实际状态
+	return RuntimeProfiler.IsValid() && (RuntimeProfiler->IsRecording() || RuntimeProfiler->IsPaused());
 }
 
 bool SBlueprintProfilerWidget::CanPauseRecording() const
 {
-	return CurrentRecordingState == ERecordingState::Recording && RuntimeProfiler.IsValid();
+	// 直接查询 Profiler 的实际状态
+	return RuntimeProfiler.IsValid() && RuntimeProfiler->IsRecording();
 }
 
 bool SBlueprintProfilerWidget::CanResumeRecording() const
 {
-	return CurrentRecordingState == ERecordingState::Paused && RuntimeProfiler.IsValid();
+	// 直接查询 Profiler 的实际状态
+	return RuntimeProfiler.IsValid() && RuntimeProfiler->IsPaused();
 }
 
 bool SBlueprintProfilerWidget::CanResetData() const
 {
-	return CurrentRecordingState == ERecordingState::Stopped && RuntimeProfiler.IsValid();
+	// 直接查询 Profiler 的实际状态
+	return RuntimeProfiler.IsValid() && !RuntimeProfiler->IsRecording() && !RuntimeProfiler->IsPaused();
 }
 
 bool SBlueprintProfilerWidget::CanSaveSession() const
@@ -2343,7 +2363,14 @@ bool SBlueprintProfilerWidget::HasDataToExport() const
 // Recording state helpers
 FText SBlueprintProfilerWidget::GetRecordingStateText() const
 {
-	switch (CurrentRecordingState)
+	// 直接查询 Profiler 的实际状态
+	if (!RuntimeProfiler.IsValid())
+	{
+		return LOCTEXT("RecordingStateUnknown", "未知");
+	}
+
+	ERecordingState State = RuntimeProfiler->GetRecordingState();
+	switch (State)
 	{
 		case ERecordingState::Recording:
 			return LOCTEXT("RecordingStateRecording", "录制中");
@@ -2357,7 +2384,14 @@ FText SBlueprintProfilerWidget::GetRecordingStateText() const
 
 FSlateColor SBlueprintProfilerWidget::GetRecordingStateColor() const
 {
-	switch (CurrentRecordingState)
+	// 直接查询 Profiler 的实际状态
+	if (!RuntimeProfiler.IsValid())
+	{
+		return FLinearColor::Gray;
+	}
+
+	ERecordingState State = RuntimeProfiler->GetRecordingState();
+	switch (State)
 	{
 		case ERecordingState::Recording:
 			return FLinearColor::Red;
@@ -2375,25 +2409,27 @@ FText SBlueprintProfilerWidget::GetSessionInfoText() const
 	{
 		return LOCTEXT("NoSessionInfo", "无会话");
 	}
-	
+
 	FRecordingSession Session = RuntimeProfiler->GetCurrentSession();
-	
+
 	if (Session.SessionName.IsEmpty())
 	{
 		return LOCTEXT("NoActiveSession", "无活动会话");
 	}
-	
-	if (CurrentRecordingState == ERecordingState::Recording)
+
+	// 直接查询 Profiler 的实际状态
+	ERecordingState State = RuntimeProfiler->GetRecordingState();
+	if (State == ERecordingState::Recording)
 	{
 		FTimespan ElapsedTime = FDateTime::Now() - Session.StartTime;
 		return FText::Format(
 			LOCTEXT("ActiveSessionInfo", "{0} - {1}"),
 			FText::FromString(Session.SessionName),
-			FText::FromString(FString::Printf(TEXT("%02d:%02d"), 
+			FText::FromString(FString::Printf(TEXT("%02d:%02d"),
 				ElapsedTime.GetMinutes(), ElapsedTime.GetSeconds()))
 		);
 	}
-	else if (CurrentRecordingState == ERecordingState::Paused)
+	else if (State == ERecordingState::Paused)
 	{
 		return FText::Format(
 			LOCTEXT("PausedSessionInfo", "{0} - 已暂停"),
@@ -2477,8 +2513,39 @@ void SBlueprintProfilerWidget::OnStaticScanProgress(int32 ProcessedAssets, int32
 		float Progress = TotalAssets > 0 ? (float)ProcessedAssets / (float)TotalAssets : 0.0f;
 		ProgressBar->SetPercent(Progress);
 	}
-	
+
 	UpdateProgressDisplay();
+}
+
+// PIE 结束时刷新数据（处理自动停止录制的情况）
+void SBlueprintProfilerWidget::OnPIEEnd(bool bIsSimulating)
+{
+	// 延迟刷新，确保 RuntimeProfiler 已完成停止处理
+	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([this](float DeltaTime)
+	{
+		if (RuntimeProfiler.IsValid() && RuntimeProfiler->GetRecordingState() == ERecordingState::Stopped)
+		{
+			// 刷新数据以显示录制结果
+			SetRuntimeData(RuntimeProfiler->GetExecutionData());
+			CurrentRecordingState = ERecordingState::Stopped;
+			UpdateRecordingStateDisplay();
+
+			// 更新状态文本
+			if (StatusText.IsValid())
+			{
+				FRecordingSession Session = RuntimeProfiler->GetCurrentSession();
+				StatusText->SetText(FText::Format(
+					LOCTEXT("StatusAutoStopped", "自动停止 - 会话：{0}（时长：{1}秒，节点：{2}）"),
+					FText::FromString(Session.SessionName),
+					FText::AsNumber(static_cast<int64>(FMath::RoundToFloat(Session.Duration))),
+					FText::AsNumber(Session.TotalNodesRecorded)
+				));
+			}
+
+			return false; // 只执行一次
+		}
+		return true; // 继续等待
+	}), 0.5f);
 }
 
 void SBlueprintProfilerWidget::UpdateProgressDisplay()
@@ -2560,6 +2627,63 @@ FText SBlueprintProfilerWidget::GetTimeRemainingText() const
 			LOCTEXT("TimeRemainingSeconds", "预计剩余时间：{0}秒"),
 			FText::AsNumber(Seconds)
 		);
+	}
+}
+
+// UI 刷新定时器回调
+bool SBlueprintProfilerWidget::TickUIRefresh(float DeltaTime)
+{
+	// 更新缓存的录制状态（用于其他可能使用它的地方）
+	if (RuntimeProfiler.IsValid())
+	{
+		ERecordingState NewState = RuntimeProfiler->GetRecordingState();
+		if (NewState != CurrentRecordingState)
+		{
+			CurrentRecordingState = NewState;
+
+			// 刷新录制状态显示
+			if (RecordingStateText.IsValid())
+			{
+				RecordingStateText->SetText(GetRecordingStateText());
+			}
+			if (SessionNameText.IsValid())
+			{
+				SessionNameText->SetText(GetSessionInfoText());
+			}
+
+			// 如果正在录制，定期更新数据列表
+			if (NewState == ERecordingState::Recording)
+			{
+				UpdateFilteredData();
+				if (DataListView.IsValid())
+				{
+					DataListView->RequestListRefresh();
+				}
+			}
+		}
+	}
+
+	// 刷新按钮状态
+	if (StartRecordingButton.IsValid()) StartRecordingButton->Invalidate(EInvalidateWidget::Layout);
+	if (StopRecordingButton.IsValid()) StopRecordingButton->Invalidate(EInvalidateWidget::Layout);
+	if (PauseRecordingButton.IsValid()) PauseRecordingButton->Invalidate(EInvalidateWidget::Layout);
+	if (ResumeRecordingButton.IsValid()) ResumeRecordingButton->Invalidate(EInvalidateWidget::Layout);
+	if (ResetDataButton.IsValid()) ResetDataButton->Invalidate(EInvalidateWidget::Layout);
+
+	// 继续定时器
+	return true;
+}
+
+// 析构函数：清理定时器
+SBlueprintProfilerWidget::~SBlueprintProfilerWidget()
+{
+	// 解绑 PIE 结束事件
+	FEditorDelegates::EndPIE.RemoveAll(this);
+
+	if (UIRefreshTickerHandle.IsValid())
+	{
+		FTSTicker::GetCoreTicker().RemoveTicker(UIRefreshTickerHandle);
+		UIRefreshTickerHandle.Reset();
 	}
 }
 

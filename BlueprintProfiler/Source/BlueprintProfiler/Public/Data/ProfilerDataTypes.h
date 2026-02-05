@@ -61,6 +61,11 @@ struct BLUEPRINTPROFILER_API FNodeExecutionStats
 
 	TArray<float> ExecutionTimes;
 
+	// 持久化节点信息（PIE结束后对象失效时仍能显示）
+	FString CachedNodeName;
+	FString CachedBlueprintName;
+	FGuid CachedNodeGuid;
+
 	float GetAverageExecutionTime() const
 	{
 		return ExecutionCount > 0 ? TotalExecutionTime / ExecutionCount : 0.0f;

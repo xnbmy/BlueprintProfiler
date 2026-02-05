@@ -31,12 +31,19 @@ struct BLUEPRINTPROFILER_API FExecutionFrame
 
 /**
  * Runtime Profiler - monitors blueprint node execution performance during PIE
+ * This is a singleton to ensure only one instance handles PIE events
  */
 class BLUEPRINTPROFILER_API FRuntimeProfiler
 {
 public:
-	FRuntimeProfiler();
-	~FRuntimeProfiler();
+	// Singleton access
+	static FRuntimeProfiler& Get();
+
+	// Prevent copying and moving
+	FRuntimeProfiler(const FRuntimeProfiler&) = delete;
+	FRuntimeProfiler& operator=(const FRuntimeProfiler&) = delete;
+	FRuntimeProfiler(FRuntimeProfiler&&) = delete;
+	FRuntimeProfiler& operator=(FRuntimeProfiler&&) = delete;
 
 	// Recording control
 	void StartRecording(const FString& SessionName = TEXT(""));
@@ -82,7 +89,14 @@ public:
 	void SetHideEngineInternalNodes(bool bHide) { bHideEngineInternalNodes = bHide; }
 	bool GetHideEngineInternalNodes() const { return bHideEngineInternalNodes; }
 
+	// Destructor is public for TUniquePtr cleanup
+	~FRuntimeProfiler();
+
 private:
+	FRuntimeProfiler();
+
+	// Singleton instance
+	static TUniquePtr<FRuntimeProfiler> Instance;
 	// Recording state
 	ERecordingState CurrentState;
 	FRecordingSession CurrentSession;

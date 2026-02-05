@@ -22,6 +22,7 @@ public:
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs);
+	~SBlueprintProfilerWidget();  // 析构函数，用于清理定时器
 
 	// Data management
 	void RefreshData();
@@ -157,7 +158,10 @@ private:
 	// Event callbacks for analyzers
 	void OnStaticScanComplete(const TArray<FLintIssue>& Issues);
 	void OnStaticScanProgress(int32 ProcessedAssets, int32 TotalAssets);
-	
+
+	// PIE event callbacks
+	void OnPIEEnd(bool bIsSimulating = false);
+
 	// Progress display helpers
 	void UpdateProgressDisplay();
 	FText GetProgressText() const;
@@ -167,4 +171,8 @@ private:
 	TSharedPtr<class FRuntimeProfiler> RuntimeProfiler;
 	TSharedPtr<class FStaticLinter> StaticLinter;
 	TSharedPtr<class FMemoryAnalyzer> MemoryAnalyzer;
+
+	// UI refresh ticker
+	FTSTicker::FDelegateHandle UIRefreshTickerHandle;
+	bool TickUIRefresh(float DeltaTime);  // 返回 true 继续定时器，false 停止
 };
