@@ -21,6 +21,9 @@
 #include "HAL/PlatformFilemanager.h"
 #include "Misc/DateTime.h"
 #include "Framework/Application/SlateApplication.h"
+#include "UObject/Package.h"
+#include "UObject/SoftObjectPtr.h"
+#include "HAL/PlatformProcess.h"
 
 /**
  * Async task for blueprint scanning
@@ -37,70 +40,76 @@ public:
 
 	void DoWork()
 	{
+		// Asset loading must happen on game thread, so we dispatch all work there
+		// This method just queues the work and waits for completion
+
 		TArray<FLintIssue> AllIssues;
-		int32 ProcessedCount = 0;
+		FThreadSafeCounter ProcessedCount;
 
-		UE_LOG(LogTemp, Log, TEXT("FScanTask: Starting to process %d assets"), Assets.Num());
+		UE_LOG(LogTemp, Log, TEXT("FScanTask: Starting to process %d assets on game thread"), Assets.Num());
 
-		for (const FAssetData& AssetData : Assets)
+		// Process all assets on game thread (required for blueprint loading)
+		AsyncTask(ENamedThreads::GameThread, [this, &AllIssues, &ProcessedCount]()
 		{
-			// Check if linter is still valid
 			TSharedPtr<FStaticLinter> LinterPin = LinterWeak.Pin();
 			if (!LinterPin.IsValid())
 			{
-				// Linter was destroyed, abort scan
 				UE_LOG(LogTemp, Warning, TEXT("FScanTask: Linter was destroyed, aborting scan"));
 				return;
 			}
 
-			if (LinterPin->IsCancelRequested())
+			for (const FAssetData& AssetData : Assets)
 			{
-				UE_LOG(LogTemp, Log, TEXT("FScanTask: Scan was cancelled after %d assets"), ProcessedCount);
-				break;
-			}
-
-			// Process this blueprint
-			TArray<FLintIssue> AssetIssues;
-			LinterPin->ProcessBlueprint(AssetData, Config, AssetIssues);
-
-			// Accumulate issues
-			{
-				FScopeLock Lock(&LinterPin->GetIssuesLock());
-				AllIssues.Append(AssetIssues);
-			}
-
-			ProcessedCount++;
-
-			// Update progress immediately (synchronously update the data)
-			// Then notify UI on game thread
-			FString CurrentAssetName = AssetData.AssetName.ToString();
-
-			// Log progress for debugging
-			UE_LOG(LogTemp, Log, TEXT("FScanTask: Processed %d/%d - %s (%d issues found)"),
-				ProcessedCount, Assets.Num(), *CurrentAssetName, AssetIssues.Num());
-
-			// Use Async to update UI on game thread
-			AsyncTask(ENamedThreads::GameThread, [this, ProcessedCount, CurrentAssetName]()
-			{
-				TSharedPtr<FStaticLinter> LinterPin = LinterWeak.Pin();
-				if (LinterPin.IsValid())
+				if (LinterPin->IsCancelRequested())
 				{
-					LinterPin->UpdateScanProgress(ProcessedCount, Assets.Num(), CurrentAssetName);
+					UE_LOG(LogTemp, Log, TEXT("FScanTask: Scan was cancelled after %d assets"), ProcessedCount.GetValue());
+					break;
 				}
-			});
 
-			// Small delay every few assets to prevent overwhelming the system
-			if (Config.bUseMultiThreading && ProcessedCount % 5 == 0)
+				// Process this blueprint
+				TArray<FLintIssue> AssetIssues;
+				LinterPin->ProcessBlueprint(AssetData, Config, AssetIssues);
+
+				// Accumulate issues
+				{
+					FScopeLock Lock(&LinterPin->GetIssuesLock());
+					AllIssues.Append(AssetIssues);
+				}
+
+				int32 CurrentCount = ProcessedCount.Increment();
+
+				// Update progress
+				LinterPin->UpdateScanProgress(CurrentCount, Assets.Num(), AssetData.AssetName.ToString());
+
+				// Log progress for debugging
+				UE_LOG(LogTemp, Log, TEXT("FScanTask: Processed %d/%d - %s (%d issues found)"),
+					CurrentCount, Assets.Num(), *AssetData.AssetName.ToString(), AssetIssues.Num());
+			}
+		});
+
+		// Wait for game thread processing to complete
+		// Since DoWork runs on a thread pool thread, we need to wait for the game thread task
+		while (ProcessedCount.GetValue() < Assets.Num() && !LinterWeak.Pin()->IsCancelRequested())
+		{
+			FPlatformProcess::Sleep(0.01f); // Sleep 10ms
+
+			// Check if linter is still valid
+			TSharedPtr<FStaticLinter> LinterPin = LinterWeak.Pin();
+			if (!LinterPin.IsValid())
 			{
-				FPlatformProcess::Sleep(0.001f); // 1ms delay every 5 assets
+				UE_LOG(LogTemp, Warning, TEXT("FScanTask: Linter was destroyed during scan"));
+				return;
 			}
 		}
 
-		UE_LOG(LogTemp, Log, TEXT("FScanTask: Completed processing %d assets, found %d total issues"),
-			ProcessedCount, AllIssues.Num());
+		TSharedPtr<FStaticLinter> LinterPin = LinterWeak.Pin();
+		if (LinterPin.IsValid())
+		{
+			UE_LOG(LogTemp, Log, TEXT("FScanTask: Completed processing %d assets, found %d total issues"),
+				ProcessedCount.GetValue(), AllIssues.Num());
+		}
 
 		// Complete scan on game thread (async)
-		// The lambda will capture 'this' which keeps the task alive until CompleteScan is called
 		AsyncTask(ENamedThreads::GameThread, [this, AllIssues]()
 		{
 			TSharedPtr<FStaticLinter> LinterPin = LinterWeak.Pin();
@@ -373,22 +382,22 @@ void FStaticLinter::ProcessBlueprint(const FAssetData& AssetData, const FScanCon
 		return;
 	}
 
-	// Validate blueprint state
-	if (!Blueprint->GeneratedClass)
+	// Validate blueprint state - but allow blueprints that haven't been fully compiled
+	if (!Blueprint->GeneratedClass && !Blueprint->SkeletonGeneratedClass)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Blueprint has no generated class: %s"), *Blueprint->GetName());
-		return;
+		UE_LOG(LogTemp, Warning, TEXT("Blueprint has no generated class (not yet compiled): %s"), *Blueprint->GetName());
+		// Don't skip - we can still analyze the graph structure even without compiled class
 	}
 
 	// Check if blueprint is valid for analysis
-	if (Blueprint->UbergraphPages.Num() == 0 && Blueprint->FunctionGraphs.Num() == 0)
+	if (Blueprint->UbergraphPages.Num() == 0 && Blueprint->FunctionGraphs.Num() == 0 && Blueprint->MacroGraphs.Num() == 0)
 	{
 		UE_LOG(LogTemp, Verbose, TEXT("Blueprint has no graphs to analyze: %s"), *Blueprint->GetName());
 		return;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("Analyzing blueprint: %s (%d uber graphs, %d function graphs)"),
-		*Blueprint->GetName(), Blueprint->UbergraphPages.Num(), Blueprint->FunctionGraphs.Num());
+	UE_LOG(LogTemp, Log, TEXT("Analyzing blueprint: %s (%d uber graphs, %d function graphs, %d macro graphs)"),
+		*Blueprint->GetName(), Blueprint->UbergraphPages.Num(), Blueprint->FunctionGraphs.Num(), Blueprint->MacroGraphs.Num());
 
 	// Run enabled checks with error handling
 	try
@@ -537,36 +546,39 @@ void FStaticLinter::DetectDeadNodes(UBlueprint* Blueprint, TArray<FLintIssue>& O
 			// Check for unreferenced function definitions
 			else if (UK2Node_Event* EventNode = Cast<UK2Node_Event>(Node))
 			{
-				// Skip built-in events like BeginPlay, Tick, etc.
+				// Skip all built-in events (Receive*)
 				FName EventName = EventNode->GetFunctionName();
-				if (EventName != TEXT("ReceiveBeginPlay") && 
-					EventName != TEXT("ReceiveTick") && 
-					EventName != TEXT("ReceiveEndPlay") &&
-					EventName != TEXT("BeginPlay") &&
-					EventName != TEXT("Tick") &&
-					EventName != TEXT("EndPlay"))
+				if (EventName.ToString().StartsWith(TEXT("Receive")))
 				{
-					// Check if this custom event is referenced
-					bool bIsReferenced = ReferencedFunctions.Contains(EventName);
-					
-					if (!bIsReferenced)
-					{
-						// Also check for direct event calls by GUID
-						bIsReferenced = ReferencedCustomEvents.Contains(EventNode->NodeGuid);
-					}
+					continue; // Skip all Receive* events
+				}
 
-					if (!bIsReferenced)
-					{
-						FLintIssue Issue;
-						Issue.Type = ELintIssueType::DeadNode;
-						Issue.BlueprintPath = Blueprint->GetPathName();
-						Issue.NodeName = EventName.ToString();
-						Issue.Description = FString::Printf(TEXT("Custom event '%s' is defined but never called"), *Issue.NodeName);
-						Issue.Severity = CalculateIssueSeverity(ELintIssueType::DeadNode);
-						Issue.NodeGuid = EventNode->NodeGuid;
-						
-						OutIssues.Add(Issue);
-					}
+				// Skip interface events - they are called by the blueprint system automatically
+				if (EventNode->IsInterfaceEventNode())
+				{
+					continue;
+				}
+
+				// Check if this custom event is referenced
+				bool bIsReferenced = ReferencedFunctions.Contains(EventName);
+
+				if (!bIsReferenced)
+				{
+					// Also check for direct event calls by GUID
+					bIsReferenced = ReferencedCustomEvents.Contains(EventNode->NodeGuid);
+				}
+
+				if (!bIsReferenced)
+				{
+					FLintIssue Issue;
+					Issue.Type = ELintIssueType::DeadNode;
+					Issue.BlueprintPath = Blueprint->GetPathName();
+					Issue.NodeName = EventName.ToString();
+					Issue.Description = FString::Printf(TEXT("自定义事件 '%s' 已定义但从未被调用"), *Issue.NodeName);
+					Issue.Severity = ESeverity::Low; // 未调用的事件不一定严重
+					Issue.NodeGuid = EventNode->NodeGuid;
+
+					OutIssues.Add(Issue);
 				}
 			}
 		}
@@ -614,6 +626,18 @@ void FStaticLinter::DetectOrphanNodes(UBlueprint* Blueprint, TArray<FLintIssue>&
 				continue;
 			}
 
+			// Skip Event nodes - they're entry points and don't need to be connected
+			if (Node->IsA<UK2Node_Event>() || Node->IsA<UK2Node_CustomEvent>())
+			{
+				continue;
+			}
+
+			// Skip macro instance nodes - they are references to other graphs
+			if (Node->IsA<UK2Node_MacroInstance>())
+			{
+				continue;
+			}
+
 			// Check for pure nodes (computation nodes) without execution connections
 			if (UK2Node* K2Node = Cast<UK2Node>(Node))
 			{
@@ -621,8 +645,8 @@ void FStaticLinter::DetectOrphanNodes(UBlueprint* Blueprint, TArray<FLintIssue>&
 				{
 					bool bHasOutputConnections = false;
 					bool bHasInputConnections = false;
-					
-					// Check if any output pins are connected
+
+					// Check all pins for connections
 					for (UEdGraphPin* Pin : K2Node->Pins)
 					{
 						if (Pin && Pin->Direction == EGPD_Output && Pin->LinkedTo.Num() > 0)
@@ -635,64 +659,53 @@ void FStaticLinter::DetectOrphanNodes(UBlueprint* Blueprint, TArray<FLintIssue>&
 						}
 					}
 
-					// A pure node is orphaned if it has no output connections
-					// or if it has no input connections (making it useless)
-					if (!bHasOutputConnections)
+					// Only report if node has NO connections at all (both input and output disconnected)
+					// This is a much stricter check to avoid false positives
+					if (!bHasOutputConnections && !bHasInputConnections)
 					{
+						// Skip constant nodes and utility nodes that don't need connections
+						FString NodeClass = K2Node->GetClass()->GetName();
+						FString NodeTitle = K2Node->GetNodeTitle(ENodeTitleType::ListView).ToString();
+
+						// Skip nodes that are typically standalone
+						if (NodeClass.Contains(TEXT("Literal")) ||
+							NodeClass.Contains(TEXT("Constant")) ||
+							NodeTitle.Contains(TEXT("Make")) ||  // Make nodes are typically standalone
+							NodeTitle.Contains(TEXT("Select")) ||  // Select nodes are typically standalone
+							NodeTitle.Contains(TEXT("Branch"))) // Branch nodes are standalone
+						{
+							continue;
+						}
+
 						FLintIssue Issue;
 						Issue.Type = ELintIssueType::OrphanNode;
 						Issue.BlueprintPath = Blueprint->GetPathName();
-						Issue.NodeName = K2Node->GetNodeTitle(ENodeTitleType::ListView).ToString();
-						Issue.Description = FString::Printf(TEXT("Pure node '%s' has no output connections and serves no purpose"), *Issue.NodeName);
-						Issue.Severity = CalculateIssueSeverity(ELintIssueType::OrphanNode);
+						Issue.NodeName = NodeTitle;
+						Issue.Description = FString::Printf(TEXT("纯节点 '%s' 没有任何连接"), *Issue.NodeName);
+						Issue.Severity = ESeverity::Low; // 孤立节点不是严重问题
 						Issue.NodeGuid = K2Node->NodeGuid;
-						
-						OutIssues.Add(Issue);
-					}
-					else if (!bHasInputConnections && K2Node->Pins.Num() > 1) // Has pins but no inputs
-					{
-						// Check if this is a constant/literal node (which is OK to have no inputs)
-						bool bIsConstantNode = false;
-						FString NodeClass = K2Node->GetClass()->GetName();
-						
-						// Skip constant/literal nodes as they're expected to have no inputs
-						if (NodeClass.Contains(TEXT("Literal")) || 
-							NodeClass.Contains(TEXT("Constant")) ||
-							K2Node->GetNodeTitle(ENodeTitleType::ListView).ToString().Contains(TEXT("Get")))
-						{
-							bIsConstantNode = true;
-						}
 
-						if (!bIsConstantNode)
-						{
-							FLintIssue Issue;
-							Issue.Type = ELintIssueType::OrphanNode;
-							Issue.BlueprintPath = Blueprint->GetPathName();
-							Issue.NodeName = K2Node->GetNodeTitle(ENodeTitleType::ListView).ToString();
-							Issue.Description = FString::Printf(TEXT("Pure node '%s' has no input connections but expects inputs"), *Issue.NodeName);
-							Issue.Severity = CalculateIssueSeverity(ELintIssueType::OrphanNode);
-							Issue.NodeGuid = K2Node->NodeGuid;
-							
-							OutIssues.Add(Issue);
-						}
+						OutIssues.Add(Issue);
 					}
 				}
 			}
-			// Also check for non-pure nodes that are completely disconnected
-			else if (UEdGraphNode* GraphNode = Cast<UEdGraphNode>(Node))
+			// Check for non-pure nodes with execution pins but no connections
+			else
 			{
 				bool bHasAnyConnections = false;
 				bool bHasExecutionPins = false;
-				
-				for (UEdGraphPin* Pin : GraphNode->Pins)
+
+				for (UEdGraphPin* Pin : Node->Pins)
 				{
 					if (Pin)
 					{
+						// Check for execution pins
 						if (Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec)
 						{
 							bHasExecutionPins = true;
 						}
-						
+
+						// Check for any connections
 						if (Pin->LinkedTo.Num() > 0)
 						{
 							bHasAnyConnections = true;
@@ -700,21 +713,21 @@ void FStaticLinter::DetectOrphanNodes(UBlueprint* Blueprint, TArray<FLintIssue>&
 					}
 				}
 
-				// If node has execution pins but no connections at all, it's orphaned
+				// Only report if it has execution pins but completely disconnected
 				if (bHasExecutionPins && !bHasAnyConnections)
 				{
 					// Skip certain node types that are OK to be disconnected
-					if (!Node->IsA<UK2Node_Event>() && 
+					if (!Node->IsA<UK2Node_Event>() &&
 						!Node->IsA<UK2Node_CustomEvent>())
 					{
 						FLintIssue Issue;
 						Issue.Type = ELintIssueType::OrphanNode;
 						Issue.BlueprintPath = Blueprint->GetPathName();
 						Issue.NodeName = Node->GetNodeTitle(ENodeTitleType::ListView).ToString();
-						Issue.Description = FString::Printf(TEXT("Node '%s' has execution pins but no connections"), *Issue.NodeName);
-						Issue.Severity = CalculateIssueSeverity(ELintIssueType::OrphanNode);
+						Issue.Description = FString::Printf(TEXT("执行节点 '%s' 有执行引脚但没有连接"), *Issue.NodeName);
+						Issue.Severity = ESeverity::Medium;
 						Issue.NodeGuid = Node->NodeGuid;
-						
+
 						OutIssues.Add(Issue);
 					}
 				}

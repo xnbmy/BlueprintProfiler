@@ -1854,6 +1854,26 @@ TSharedPtr<FProfilerDataItem> SBlueprintProfilerWidget::CreateDataItemFromLintIs
 	Item->NodeGuid = Issue.NodeGuid;
 	Item->Value = 1.0f; // Lint issues are binary
 
+	// Try to load the blueprint for navigation
+	if (!Issue.BlueprintPath.IsEmpty())
+	{
+		// Try to find the blueprint asset in the asset registry
+		FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+		IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+
+		// Use FName version with explicit template parameter to avoid ambiguity
+		FAssetData AssetData = AssetRegistry.GetAssetByObjectPath(FName(*Issue.BlueprintPath));
+
+		if (AssetData.IsValid())
+		{
+			UObject* LoadedAsset = AssetData.GetAsset();
+			if (UBlueprint* Blueprint = Cast<UBlueprint>(LoadedAsset))
+			{
+				Item->TargetObject = Blueprint;
+			}
+		}
+	}
+
 	// Set detailed category and description based on issue type (使用中文类别)
 	switch (Issue.Type)
 	{
