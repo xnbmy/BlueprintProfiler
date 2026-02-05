@@ -967,7 +967,10 @@ FReply SBlueprintProfilerWidget::OnClearSessionHistory()
 	if (RuntimeProfiler.IsValid())
 	{
 		RuntimeProfiler->ClearSessionHistory();
-		
+
+		// 清除后刷新 UI 显示
+		RefreshData();
+
 		if (StatusText.IsValid())
 		{
 			StatusText->SetText(LOCTEXT("StatusHistoryCleared", "会话历史已清除"));
@@ -1739,6 +1742,7 @@ void SBlueprintProfilerWidget::ClearFilters()
 {
 	CurrentSearchText.Empty();
 	CurrentFilterBy = TEXT("全部");
+	CurrentSortBy = TEXT("严重程度"); // 重置排序
 
 	if (SearchBox.IsValid())
 	{
@@ -1748,6 +1752,11 @@ void SBlueprintProfilerWidget::ClearFilters()
 	if (FilterComboBox.IsValid() && FilterOptions.Num() > 0)
 	{
 		FilterComboBox->SetSelectedItem(FilterOptions[0]); // "全部"
+	}
+
+	if (SortComboBox.IsValid() && SortOptions.Num() > 0)
+	{
+		SortComboBox->SetSelectedItem(SortOptions[4]); // "严重程度" (索引4)
 	}
 
 	UpdateFilteredData();
