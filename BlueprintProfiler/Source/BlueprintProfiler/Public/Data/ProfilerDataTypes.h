@@ -90,6 +90,9 @@ struct BLUEPRINTPROFILER_API FNodeExecutionData
 	FString BlueprintName;
 
 	UPROPERTY(BlueprintReadOnly)
+	FGuid NodeGuid;
+
+	UPROPERTY(BlueprintReadOnly)
 	int32 TotalExecutions = 0;
 
 	UPROPERTY(BlueprintReadOnly)

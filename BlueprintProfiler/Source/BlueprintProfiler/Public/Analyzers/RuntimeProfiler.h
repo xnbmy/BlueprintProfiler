@@ -7,7 +7,11 @@
 
 // Forward declarations for blueprint instrumentation
 struct FFrame;
-struct FBlueprintInstrumentationSignal;
+struct FScriptInstrumentationSignal;
+
+// Forward declarations for breakpoint system
+struct FBlueprintBreakpoint;
+struct FBlueprintExceptionInfo;
 
 /**
  * Execution frame data for timeline analysis
@@ -57,7 +61,7 @@ public:
 	TArray<FTickAbuseInfo> GetTickAbuseActors() const;
 
 	// Event handling
-	void OnScriptInstrumentation(const FFrame& Frame, const FBlueprintInstrumentationSignal& Signal);
+	void OnScriptProfilingEvent(const FScriptInstrumentationSignal& Signal);
 	void OnPIEBegin(bool bIsSimulating);
 	void OnPIEEnd(bool bIsSimulating);
 
@@ -66,6 +70,13 @@ public:
 	bool GetAutoStartOnPIE() const { return bAutoStartOnPIE; }
 	void SetAutoStopOnPIEEnd(bool bEnabled) { bAutoStopOnPIEEnd = bEnabled; }
 	bool GetAutoStopOnPIEEnd() const { return bAutoStopOnPIEEnd; }
+
+	// Async tracepoint setup completion delegate
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnTracepointSetupComplete, bool /* bSuccess */);
+	FOnTracepointSetupComplete OnTracepointSetupComplete;
+
+	// Check if async setup is in progress
+	bool IsSettingUpTracepoints() const { return bIsSettingUpTracepoints; }
 
 private:
 	// Recording state
@@ -79,11 +90,34 @@ private:
 	// PIE integration settings
 	bool bAutoStartOnPIE;
 	bool bAutoStopOnPIEEnd;
+	bool bIsInstrumentationEnabled;
+
+	// Blueprint instrumentation delegate handle
+	FDelegateHandle InstrumentationDelegateHandle;
+
+	// Script exception (breakpoint) delegate handle for tracing
+	FDelegateHandle ScriptExceptionDelegateHandle;
+
+	// Thread safety for data recording
+	mutable FCriticalSection DataMutex;
+
+	// Breakpoint system state management
+	// Maps: Blueprint -> Array of (Node -> Original Breakpoint State)
+	// We need to save/restore breakpoints so we don't interfere with user's debugging
+	struct FOriginalBreakpointInfo
+	{
+		TWeakObjectPtr<UBlueprint> Blueprint;
+		TMap<TWeakObjectPtr<UEdGraphNode>, bool> OriginalBreakpointStates;
+	};
+	TMap<TWeakObjectPtr<UBlueprint>, FOriginalBreakpointInfo> SavedBreakpointStates;
 
 	// Execution data
 	TMap<TWeakObjectPtr<UObject>, FNodeExecutionStats> NodeStats;
 	TArray<FExecutionFrame> ExecutionFrames;
 	TArray<FTickAbuseInfo> TickAbuseData;
+
+	// Timer for periodic blueprint execution collection
+	FTimerHandle SamplingTimerHandle;
 
 	// Blueprint instrumentation methods
 	void InitializeBlueprintInstrumentation();
@@ -100,6 +134,7 @@ private:
 	
 	// Data recording methods
 	void RecordNodeExecution(const FFrame& Frame);
+	void CollectBlueprintExecutionData();
 	void CheckForTickAbuse(UObject* Object, const FNodeExecutionStats& Stats);
 	bool HasComplexTickLogic(AActor* Actor);
 	void RecordTickAbuse(AActor* Actor, const FNodeExecutionStats& Stats);
@@ -114,4 +149,27 @@ private:
 	int32 AnalyzeGraphComplexity(UEdGraph* Graph) const;
 	bool HasTickEvent(UEdGraph* Graph) const;
 	bool IsExpensiveFunction(const FString& FunctionName) const;
+
+	// Breakpoint tracing methods
+	void SetupBlueprintTracepoints(UBlueprint* Blueprint);
+	void RemoveBlueprintTracepoints(UBlueprint* Blueprint);
+	void SetupTracepointsForAllBlueprints();
+	void SetupTracepointsForAllBlueprintsAsync();  // Async version
+	void RemoveTracepointsFromAllBlueprints();
+	void OnScriptExceptionTrace(const UObject* ActiveObject, const FFrame& StackFrame, const FBlueprintExceptionInfo& Info);
+	bool IsTracepointActive() const { return bTracepointsActive; }
+	void ProcessNextTracepointBatch();  // Called by timer for batch processing
+
+private:
+	// Tracepoint state
+	bool bTracepointsActive = false;
+	bool bSkipRecording = false;  // Flag to skip recording to avoid recursive events
+	bool bIsSettingUpTracepoints = false;  // Async setup in progress
+	uint64 TotalEventsProcessed = 0;  // For debugging
+	uint64 LastLoggingTime = 0;      // Rate limit logging
+
+	// Async tracepoint setup state
+	TArray<FAssetData> PendingBlueprints;  // Blueprints waiting for tracepoint setup
+	int32 CurrentBlueprintIndex = 0;       // Current processing index
+	FTimerHandle TracepointSetupTimerHandle;  // Timer for batch processing
 };

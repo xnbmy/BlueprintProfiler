@@ -20,6 +20,7 @@
 #include "Misc/ScopedSlowTask.h"
 #include "HAL/PlatformFilemanager.h"
 #include "Misc/DateTime.h"
+#include "Framework/Application/SlateApplication.h"
 
 /**
  * Async task for blueprint scanning
@@ -27,8 +28,8 @@
 class FScanTask : public FNonAbandonableTask
 {
 public:
-	FScanTask(FStaticLinter* InLinter, const TArray<FAssetData>& InAssets, const FScanConfiguration& InConfig)
-		: Linter(InLinter)
+	FScanTask(TSharedPtr<FStaticLinter> InLinter, const TArray<FAssetData>& InAssets, const FScanConfiguration& InConfig)
+		: LinterWeak(InLinter)
 		, Assets(InAssets)
 		, Config(InConfig)
 	{
@@ -36,41 +37,45 @@ public:
 
 	void DoWork()
 	{
-		if (!Linter)
-		{
-			return;
-		}
-
 		TArray<FLintIssue> AllIssues;
 		int32 ProcessedCount = 0;
 
 		for (const FAssetData& AssetData : Assets)
 		{
-			if (Linter->IsCancelRequested())
+			// Check if linter is still valid
+			TSharedPtr<FStaticLinter> LinterPin = LinterWeak.Pin();
+			if (!LinterPin.IsValid())
+			{
+				// Linter was destroyed, abort scan
+				return;
+			}
+
+			if (LinterPin->IsCancelRequested())
 			{
 				break;
 			}
 
 			TArray<FLintIssue> AssetIssues;
-			Linter->ProcessBlueprint(AssetData, Config, AssetIssues);
-			
+			LinterPin->ProcessBlueprint(AssetData, Config, AssetIssues);
+
 			{
-				FScopeLock Lock(&Linter->GetIssuesLock());
+				FScopeLock Lock(&LinterPin->GetIssuesLock());
 				AllIssues.Append(AssetIssues);
 			}
 
 			ProcessedCount++;
-			
+
 			// Update progress on game thread with current asset name
 			FString CurrentAssetName = AssetData.AssetName.ToString();
 			AsyncTask(ENamedThreads::GameThread, [this, ProcessedCount, CurrentAssetName]()
 			{
-				if (Linter)
+				TSharedPtr<FStaticLinter> LinterPin = LinterWeak.Pin();
+				if (LinterPin.IsValid())
 				{
-					Linter->UpdateScanProgress(ProcessedCount, Assets.Num(), CurrentAssetName);
+					LinterPin->UpdateScanProgress(ProcessedCount, Assets.Num(), CurrentAssetName);
 				}
 			});
-			
+
 			// Add small delay to prevent overwhelming the system
 			if (Config.bUseMultiThreading && ProcessedCount % 10 == 0)
 			{
@@ -78,12 +83,14 @@ public:
 			}
 		}
 
-		// Complete scan on game thread
+		// Complete scan on game thread (async)
+		// The lambda will capture 'this' which keeps the task alive until CompleteScan is called
 		AsyncTask(ENamedThreads::GameThread, [this, AllIssues]()
 		{
-			if (Linter)
+			TSharedPtr<FStaticLinter> LinterPin = LinterWeak.Pin();
+			if (LinterPin.IsValid())
 			{
-				Linter->CompleteScan(AllIssues);
+				LinterPin->CompleteScan(AllIssues);
 			}
 		});
 	}
@@ -94,7 +101,7 @@ public:
 	}
 
 private:
-	FStaticLinter* Linter;
+	TWeakPtr<FStaticLinter> LinterWeak;
 	TArray<FAssetData> Assets;
 	FScanConfiguration Config;
 };
@@ -102,12 +109,43 @@ private:
 FStaticLinter::FStaticLinter()
 	: bScanInProgress(false)
 	, bCancelRequested(false)
+	, bTaskComplete(true)
 {
 }
 
 FStaticLinter::~FStaticLinter()
 {
-	CancelScan();
+	// Mark as cancelled to prevent CompleteScan from accessing this object
+	bCancelRequested = true;
+	bScanInProgress = false;
+
+	// Wait for the background task and its async completion callback to finish
+	if (CurrentScanTask.IsValid())
+	{
+		// Wait for the background DoWork to complete
+		CurrentScanTask->EnsureCompletion();
+
+		// Wait a bit longer for the async CompleteScan callback to execute
+		// The callback is scheduled on the game thread, so we need to give it time to run
+		double WaitStartTime = FPlatformTime::Seconds();
+		const double MaxWaitTime = 5.0; // Wait up to 5 seconds
+
+		while (!bTaskComplete && (FPlatformTime::Seconds() - WaitStartTime) < MaxWaitTime)
+		{
+			FPlatformProcess::Sleep(0.01f); // Sleep 10ms
+
+			// Pump the message queue to allow async tasks to run
+			FSlateApplication::Get().PumpMessages();
+		}
+
+		if (!bTaskComplete)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("StaticLinter destructor: Task completion callback did not execute in time"));
+		}
+	}
+
+	// Now it's safe to reset
+	CurrentScanTask.Reset();
 }
 
 void FStaticLinter::ScanProject(const FScanConfiguration& Config)
@@ -193,24 +231,26 @@ void FStaticLinter::CancelScan()
 	{
 		bCancelRequested = true;
 		CurrentProgress.bWasCancelled = true;
-		
-		UE_LOG(LogTemp, Log, TEXT("Scan cancellation requested - processed %d/%d assets"), 
+
+		UE_LOG(LogTemp, Log, TEXT("Scan cancellation requested - processed %d/%d assets"),
 			CurrentProgress.ProcessedAssets, CurrentProgress.TotalAssets);
-		
+
 		if (CurrentScanTask.IsValid())
 		{
-			// Wait for task to complete gracefully
+			// Wait for background task to complete
 			CurrentScanTask->EnsureCompletion();
-			CurrentScanTask.Reset();
+
+			// Don't reset here - let CompleteScan() handle the reset
+			// or it will be reset when next scan starts
 		}
-		
+
 		bScanInProgress = false;
 		bCancelRequested = false;
-		
+
 		// Preserve partial results if any were found
-		UE_LOG(LogTemp, Log, TEXT("Scan cancelled - %d issues found in %d processed assets"), 
+		UE_LOG(LogTemp, Log, TEXT("Scan cancelled - %d issues found in %d processed assets"),
 			Issues.Num(), CurrentProgress.ProcessedAssets);
-		
+
 		// Broadcast completion with partial results
 		OnScanComplete.Broadcast(Issues);
 	}
@@ -233,10 +273,18 @@ TArray<FLintIssue> FStaticLinter::GetIssuesByType(ELintIssueType Type) const
 
 void FStaticLinter::StartAsyncScan(const TArray<FAssetData>& Assets, const FScanConfiguration& Config)
 {
+	// Ensure any previous task is completed
+	if (CurrentScanTask.IsValid())
+	{
+		CurrentScanTask->EnsureCompletion();
+		CurrentScanTask.Reset();
+	}
+
 	bScanInProgress = true;
 	bCancelRequested = false;
+	bTaskComplete = false; // Task is starting, mark as incomplete
 	Issues.Empty();
-	
+
 	CurrentProgress.TotalAssets = Assets.Num();
 	CurrentProgress.ProcessedAssets = 0;
 	CurrentProgress.IssuesFound = 0;
@@ -246,20 +294,26 @@ void FStaticLinter::StartAsyncScan(const TArray<FAssetData>& Assets, const FScan
 	CurrentProgress.bIsCompleted = false;
 	CurrentProgress.bWasCancelled = false;
 
-	UE_LOG(LogTemp, Log, TEXT("Starting scan of %d assets with %s threading"), 
+	UE_LOG(LogTemp, Log, TEXT("Starting scan of %d assets with %s threading"),
 		Assets.Num(), Config.bUseMultiThreading ? TEXT("multi") : TEXT("single"));
 
 	if (Config.bUseMultiThreading && Assets.Num() > 1)
 	{
 		// Use async task for multi-threading
-		CurrentScanTask = MakeShared<FAsyncTask<FScanTask>>(this, Assets, Config);
+		// Create a TSharedPtr to this object to pass to the task
+		TSharedPtr<FStaticLinter> LinterPtr(this, [](FStaticLinter* /*Linter*/) {
+			// Custom deleter that doesn't actually delete - the object is owned by its parent
+			// This allows us to use TSharedPtr without taking ownership
+		});
+
+		CurrentScanTask = MakeShared<FAsyncTask<FScanTask>>(LinterPtr, Assets, Config);
 		CurrentScanTask->StartBackgroundTask();
 	}
 	else
 	{
 		// Process synchronously for single assets or when multi-threading is disabled
 		TArray<FLintIssue> AllIssues;
-		
+
 		for (int32 AssetIndex = 0; AssetIndex < Assets.Num(); AssetIndex++)
 		{
 			if (bCancelRequested)
@@ -272,10 +326,10 @@ void FStaticLinter::StartAsyncScan(const TArray<FAssetData>& Assets, const FScan
 			TArray<FLintIssue> AssetIssues;
 			ProcessBlueprint(AssetData, Config, AssetIssues);
 			AllIssues.Append(AssetIssues);
-			
+
 			UpdateScanProgress(AssetIndex + 1, Assets.Num(), AssetData.AssetName.ToString());
 		}
-		
+
 		CompleteScan(AllIssues);
 	}
 }
@@ -287,15 +341,19 @@ void FStaticLinter::ProcessBlueprint(const FAssetData& AssetData, const FScanCon
 
 	UE_LOG(LogTemp, Verbose, TEXT("Processing blueprint: %s"), *CurrentProgress.CurrentAsset);
 
-	// Load the blueprint with error handling
 	UBlueprint* Blueprint = nullptr;
-	try
+
+	// Try to get the blueprint if it's already loaded
+	if (AssetData.IsAssetLoaded())
 	{
 		Blueprint = Cast<UBlueprint>(AssetData.GetAsset());
 	}
-	catch (...)
+
+	// If not loaded and we're in a background thread, skip it
+	// In a production system, we would queue this for loading on the game thread
+	if (!Blueprint)
 	{
-		UE_LOG(LogTemp, Error, TEXT("Exception occurred while loading blueprint: %s"), *AssetData.GetObjectPathString());
+		UE_LOG(LogTemp, Verbose, TEXT("Skipping unloaded blueprint: %s (load blueprints in editor first for best results)"), *AssetData.GetObjectPathString());
 		return;
 	}
 
@@ -319,7 +377,7 @@ void FStaticLinter::ProcessBlueprint(const FAssetData& AssetData, const FScanCon
 		return;
 	}
 
-	UE_LOG(LogTemp, Verbose, TEXT("Processing blueprint: %s (%d graphs)"), 
+	UE_LOG(LogTemp, Verbose, TEXT("Processing blueprint: %s (%d graphs)"),
 		*Blueprint->GetName(), Blueprint->UbergraphPages.Num() + Blueprint->FunctionGraphs.Num());
 
 	// Run enabled checks with error handling
@@ -329,17 +387,17 @@ void FStaticLinter::ProcessBlueprint(const FAssetData& AssetData, const FScanCon
 		{
 			DetectDeadNodes(Blueprint, OutIssues);
 		}
-		
+
 		if (Config.EnabledChecks.Contains(ELintIssueType::OrphanNode))
 		{
 			DetectOrphanNodes(Blueprint, OutIssues);
 		}
-		
+
 		if (Config.EnabledChecks.Contains(ELintIssueType::CastAbuse))
 		{
 			DetectCastAbuse(Blueprint, OutIssues);
 		}
-		
+
 		if (Config.EnabledChecks.Contains(ELintIssueType::TickAbuse))
 		{
 			DetectTickAbuse(Blueprint, OutIssues);
@@ -1103,28 +1161,34 @@ void FStaticLinter::UpdateScanProgress(int32 ProcessedAssets, int32 TotalAssets,
 
 void FStaticLinter::CompleteScan(const TArray<FLintIssue>& AllIssues)
 {
+	// Check if we're being called during destruction
+	// If bScanInProgress is already false and bCancelRequested is false, it means
+	// CancelScan() was called and we should not proceed
+	if (!bScanInProgress && !bCancelRequested)
+	{
+		return;
+	}
+
 	{
 		FScopeLock Lock(&IssuesLock);
 		Issues = AllIssues;
 	}
-	
+
 	CurrentProgress.IssuesFound = Issues.Num();
 	CurrentProgress.bIsCompleted = true;
 	bScanInProgress = false;
 	bCancelRequested = false;
-	
-	if (CurrentScanTask.IsValid())
-	{
-		CurrentScanTask.Reset();
-	}
-	
+
+	// Mark task as complete - this allows safe destruction
+	bTaskComplete = true;
+
 	FTimespan TotalTime = FDateTime::Now() - CurrentProgress.StartTime;
 	double TotalSeconds = TotalTime.GetTotalSeconds();
-	
+
 	OnScanComplete.Broadcast(Issues);
-	
-	UE_LOG(LogTemp, Log, TEXT("Scan completed: %d issues found in %d assets (%.2fs total, %.3fs per asset)"), 
-		Issues.Num(), CurrentProgress.TotalAssets, TotalSeconds, 
+
+	UE_LOG(LogTemp, Log, TEXT("Scan completed: %d issues found in %d assets (%.2fs total, %.3fs per asset)"),
+		Issues.Num(), CurrentProgress.TotalAssets, TotalSeconds,
 		CurrentProgress.TotalAssets > 0 ? TotalSeconds / CurrentProgress.TotalAssets : 0.0);
 }
 

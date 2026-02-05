@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell -Command \"Get-ChildItem -Path ''E:\\\\UE\\\\UE_5.6\\\\Engine\\\\Source\\\\Runtime\\\\'' -Recurse -Include ''*Blueprint*.h'' | Where-Object { $_Name -match ''Delegate'' } | Select-Object -First 20 FullName\")",
+      "Bash(powershell -Command \"Get-ChildItem -Path ''E:\\\\UE\\\\UE_5.6\\\\Engine\\\\Source\\\\Developer\\\\Windows'' -Recurse -Filter ''*Blueprint*.h'' -ErrorAction SilentlyContinue | Select-Object -First 20 FullName\")",
+      "Bash(powershell -Command:*)",
+      "Bash(dir:*)",
+      "Bash(findstr:*)"
+    ]
+  }
+}

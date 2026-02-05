@@ -19,6 +19,7 @@ public class BlueprintProfiler : ModuleRules
 				"EditorWidgets",
 				"ToolMenus",
 				"BlueprintGraph",
+				"Kismet",
 				"KismetCompiler",
 				"GraphEditor",
 				"Json",

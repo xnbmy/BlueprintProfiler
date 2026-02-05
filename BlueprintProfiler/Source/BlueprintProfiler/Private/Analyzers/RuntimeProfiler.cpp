@@ -1,6 +1,7 @@
 #include "Analyzers/RuntimeProfiler.h"
 #include "Engine/Blueprint.h"
 #include "EdGraph/EdGraph.h"
+#include "EdGraph/EdGraphNode.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "Editor.h"
@@ -12,6 +13,8 @@
 #include "K2Node_Event.h"
 #include "K2Node_CallFunction.h"
 #include "K2Node_CustomEvent.h"
+#include "K2Node_MacroInstance.h"
+#include "K2Node.h"
 #include "Engine/Engine.h"
 #include "HAL/PlatformFilemanager.h"
 #include "Dom/JsonObject.h"
@@ -20,6 +23,21 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Misc/DateTime.h"
+#include "Stats/Stats2.h"
+#include "ProfilingDebugging/CpuProfilerTrace.h"
+#include "HAL/IConsoleManager.h"
+#include "Stats/StatsData.h"
+#include "TimerManager.h"
+#include "UObject/Script.h"
+#include "Blueprint/BlueprintExceptionInfo.h"
+#include "Kismet2/KismetDebugUtilities.h"
+#include "Kismet2/Breakpoint.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "Async/Async.h"
+
+// Stats for blueprint profiling
+DECLARE_STATS_GROUP(TEXT("BlueprintProfiler"), STATGROUP_BlueprintProfiler, STATCAT_Advanced);
+DECLARE_CYCLE_STAT(TEXT("Blueprint Function Execution"), STAT_BlueprintFunctionExecution, STATGROUP_BlueprintProfiler);
 
 FRuntimeProfiler::FRuntimeProfiler()
 	: CurrentState(ERecordingState::Stopped)
@@ -28,11 +46,16 @@ FRuntimeProfiler::FRuntimeProfiler()
 	, TotalPausedTime(0.0)
 	, bAutoStartOnPIE(false)
 	, bAutoStopOnPIEEnd(true)
+	, bIsInstrumentationEnabled(false)
+	, bTracepointsActive(false)
+	, bSkipRecording(false)
+	, TotalEventsProcessed(0)
+	, LastLoggingTime(0.0)
 {
 	// Bind to PIE events
 	FEditorDelegates::BeginPIE.AddRaw(this, &FRuntimeProfiler::OnPIEBegin);
 	FEditorDelegates::EndPIE.AddRaw(this, &FRuntimeProfiler::OnPIEEnd);
-	
+
 	// Initialize blueprint instrumentation delegate
 	InitializeBlueprintInstrumentation();
 }
@@ -59,26 +82,31 @@ void FRuntimeProfiler::StartRecording(const FString& SessionName)
 	{
 		return;
 	}
-	
+
 	// End current session if it exists
 	if (CurrentState != ERecordingState::Stopped)
 	{
 		EndCurrentSession();
 	}
-	
+
 	// Start new session
 	StartNewSession(SessionName);
-	
+
 	CurrentState = ERecordingState::Recording;
 	RecordingStartTime = FPlatformTime::Seconds();
 	TotalPausedTime = 0.0;
 	NodeStats.Empty();
 	ExecutionFrames.Empty();
 	TickAbuseData.Empty();
-	
-	// Enable blueprint instrumentation
-	EnableBlueprintInstrumentation();
-	
+	TotalEventsProcessed = 0;
+	LastLoggingTime = 0.0;
+
+	// 绑定到断点触发委托
+	ScriptExceptionDelegateHandle = FBlueprintCoreDelegates::OnScriptException.AddRaw(this, &FRuntimeProfiler::OnScriptExceptionTrace);
+
+	// 异步设置蓝图追踪点（避免阻塞UI）
+	SetupTracepointsForAllBlueprintsAsync();
+
 	UE_LOG(LogTemp, Log, TEXT("Runtime profiler recording started - Session: %s"), *CurrentSession.SessionName);
 }
 
@@ -88,16 +116,28 @@ void FRuntimeProfiler::StopRecording()
 	{
 		return;
 	}
-	
+
 	CurrentState = ERecordingState::Stopped;
-	
-	// Disable blueprint instrumentation
-	DisableBlueprintInstrumentation();
-	
+
+	// 标记为不活动，防止回调中继续记录
+	bTracepointsActive = false;
+
+	// 解绑断点触发委托
+	if (ScriptExceptionDelegateHandle.IsValid())
+	{
+		FBlueprintCoreDelegates::OnScriptException.Remove(ScriptExceptionDelegateHandle);
+		ScriptExceptionDelegateHandle.Reset();
+		UE_LOG(LogTemp, Log, TEXT("[PROFILER] Unbound from OnScriptException delegate"));
+	}
+
+	// 移除所有追踪点并恢复原始断点状态
+	RemoveTracepointsFromAllBlueprints();
+
 	// End current session and save to history
 	EndCurrentSession();
-	
-	UE_LOG(LogTemp, Log, TEXT("Runtime profiler recording stopped - Session: %s"), *CurrentSession.SessionName);
+
+	UE_LOG(LogTemp, Log, TEXT("Runtime profiler recording stopped - Session: %s, Total events processed: %llu"),
+		*CurrentSession.SessionName, TotalEventsProcessed);
 }
 
 void FRuntimeProfiler::PauseRecording()
@@ -106,13 +146,13 @@ void FRuntimeProfiler::PauseRecording()
 	{
 		return;
 	}
-	
+
 	CurrentState = ERecordingState::Paused;
 	PauseStartTime = FPlatformTime::Seconds();
-	
-	// Disable blueprint instrumentation while paused
-	DisableBlueprintInstrumentation();
-	
+
+	// 暂停时禁用追踪点回调（避免不必要的开销）
+	bSkipRecording = true;
+
 	UE_LOG(LogTemp, Log, TEXT("Runtime profiler recording paused"));
 }
 
@@ -122,16 +162,16 @@ void FRuntimeProfiler::ResumeRecording()
 	{
 		return;
 	}
-	
+
 	CurrentState = ERecordingState::Recording;
-	
+
 	// Add paused time to total
 	TotalPausedTime += FPlatformTime::Seconds() - PauseStartTime;
 	PauseStartTime = 0.0;
-	
-	// Re-enable blueprint instrumentation
-	EnableBlueprintInstrumentation();
-	
+
+	// 恢复时启用追踪点回调
+	bSkipRecording = false;
+
 	UE_LOG(LogTemp, Log, TEXT("Runtime profiler recording resumed"));
 }
 
@@ -190,11 +230,39 @@ TArray<FNodeExecutionData> FRuntimeProfiler::GetExecutionData() const
 		// Try to get blueprint and node names
 		if (UObject* Object = StatsPair.Key.Get())
 		{
-			if (UBlueprint* Blueprint = Cast<UBlueprint>(Object))
+			// Case 1: Object is a UEdGraphNode (most common case)
+			if (UEdGraphNode* Node = Cast<UEdGraphNode>(Object))
+			{
+				Data.NodeName = Node->GetNodeTitle(ENodeTitleType::ListView).ToString();
+				Data.NodeGuid = Node->NodeGuid;
+
+				// Get blueprint from node's graph
+				if (Node->GetGraph())
+				{
+					if (UBlueprint* Blueprint = Cast<UBlueprint>(Node->GetGraph()->GetOuter()))
+					{
+						Data.BlueprintName = Blueprint->GetName();
+					}
+					else
+					{
+						// Try to get blueprint from class
+						if (UBlueprintGeneratedClass* BPClass = Cast<UBlueprintGeneratedClass>(Node->GetClass()))
+						{
+							if (UBlueprint* GeneratedBy = Cast<UBlueprint>(BPClass->ClassGeneratedBy))
+							{
+								Data.BlueprintName = GeneratedBy->GetName();
+							}
+						}
+					}
+				}
+			}
+			// Case 2: Object is a UBlueprint
+			else if (UBlueprint* Blueprint = Cast<UBlueprint>(Object))
 			{
 				Data.BlueprintName = Blueprint->GetName();
-				Data.NodeName = TEXT("Blueprint"); // Generic for now
+				Data.NodeName = TEXT("Blueprint");
 			}
+			// Case 3: Object has a BlueprintGeneratedClass
 			else if (UBlueprintGeneratedClass* BPClass = Cast<UBlueprintGeneratedClass>(Object->GetClass()))
 			{
 				if (UBlueprint* GeneratedByBlueprint = Cast<UBlueprint>(BPClass->ClassGeneratedBy))
@@ -202,6 +270,12 @@ TArray<FNodeExecutionData> FRuntimeProfiler::GetExecutionData() const
 					Data.BlueprintName = GeneratedByBlueprint->GetName();
 					Data.NodeName = Object->GetName();
 				}
+			}
+			// Fallback: Unknown
+			else
+			{
+				Data.BlueprintName = TEXT("Unknown Blueprint");
+				Data.NodeName = Object->GetName();
 			}
 		}
 		
@@ -476,17 +550,6 @@ TArray<FTickAbuseInfo> FRuntimeProfiler::GetTickAbuseActors() const
 	return TickAbuseData;
 }
 
-void FRuntimeProfiler::OnScriptInstrumentation(const FFrame& Frame, const FBlueprintInstrumentationSignal& Signal)
-{
-	if (CurrentState != ERecordingState::Recording)
-	{
-		return;
-	}
-	
-	// Record execution data based on the instrumentation signal
-	RecordNodeExecution(Frame);
-}
-
 void FRuntimeProfiler::OnPIEBegin(bool bIsSimulating)
 {
 	// Auto-start recording if configured to do so
@@ -533,20 +596,154 @@ void FRuntimeProfiler::InitializeBlueprintInstrumentation()
 void FRuntimeProfiler::CleanupBlueprintInstrumentation()
 {
 	// Clean up any blueprint instrumentation hooks
+	if (bIsInstrumentationEnabled)
+	{
+		// 取消委托绑定
+		if (InstrumentationDelegateHandle.IsValid())
+		{
+			FBlueprintCoreDelegates::OnScriptProfilingEvent.Remove(InstrumentationDelegateHandle);
+			InstrumentationDelegateHandle.Reset();
+			UE_LOG(LogTemp, Log, TEXT("Unbound from OnScriptProfilingEvent during cleanup"));
+		}
+
+		bIsInstrumentationEnabled = false;
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("Blueprint instrumentation cleaned up"));
 }
 
 void FRuntimeProfiler::EnableBlueprintInstrumentation()
 {
-	// Enable blueprint execution monitoring
-	// In a real implementation, this would hook into FBlueprintCoreDelegates::OnScriptInstrumentationSignal
-	UE_LOG(LogTemp, Log, TEXT("Blueprint instrumentation enabled"));
+	// Enable blueprint execution monitoring for UE 5.6
+	// This is the CORRECT way to enable blueprint profiling
+
+	// 1. Force enable blueprint instrumentation via console variable
+	// This corresponds to console command: bp.EnableInstrumentation 1
+	static IConsoleVariable* BlueprintInstrumentationCV = IConsoleManager::Get().FindConsoleVariable(TEXT("bp.EnableInstrumentation"));
+	if (BlueprintInstrumentationCV)
+	{
+		BlueprintInstrumentationCV->Set(1, ECVF_SetByCode);
+		UE_LOG(LogTemp, Warning, TEXT("Forced bp.EnableInstrumentation = 1 for profiling"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("CRITICAL: Could not find bp.EnableInstrumentation console variable! Blueprint profiling will not work."));
+	}
+
+	// 2. Bind the core delegate to receive node execution events
+	// In UE 5.6, the correct delegate is OnScriptProfilingEvent
+	InstrumentationDelegateHandle = FBlueprintCoreDelegates::OnScriptProfilingEvent.AddRaw(this, &FRuntimeProfiler::OnScriptProfilingEvent);
+	bIsInstrumentationEnabled = true;
+	UE_LOG(LogTemp, Log, TEXT("Blueprint instrumentation enabled - bound to OnScriptProfilingEvent"));
+}
+
+void FRuntimeProfiler::OnScriptProfilingEvent(const FScriptInstrumentationSignal& Signal)
+{
+	// [验证日志] 激进的日志记录来验证回调是否被触发
+	// 这将帮助我们确认蓝图仪表化是否真正工作
+	static int32 CallCount = 0;
+	CallCount++;
+
+	// [性能过滤] 1. 只要"节点进入"事件，忽略退出或其他调试事件
+	if (Signal.GetType() != EScriptInstrumentation::NodeEntry &&
+		Signal.GetType() != EScriptInstrumentation::PureNodeEntry)
+	{
+		return;
+	}
+
+	// 每 100 次调用记录一次，避免日志爆炸
+	if (CallCount % 100 == 1)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[PROFILER] OnScriptProfilingEvent CALLED! Count: %d, EventType: %d"),
+			CallCount, (int32)Signal.GetType());
+	}
+
+	// [状态检查] 只在录制状态下记录数据
+	if (CurrentState != ERecordingState::Recording)
+	{
+		return;
+	}
+
+	// [对象验证] 检查 ContextObject 是否有效（使用公共方法）
+	if (!Signal.IsContextObjectValid())
+	{
+		return;
+	}
+
+	// 由于 FScriptInstrumentationSignal 的 ContextObject 和 Function 是 protected 成员，
+	// 我们无法直接访问它们。这里使用一个简化的方法来记录执行次数。
+	// 我们使用调用计数器和一个简单的键来跟踪执行。
+
+	// 线程安全地更新执行统计
+	FScopeLock Lock(&DataMutex);
+
+	// 使用一个通用的计数器来记录总的蓝图节点执行次数
+	static TWeakObjectPtr<UObject> BlueprintExecutionKey(nullptr);
+	FNodeExecutionStats& Stats = NodeStats.FindOrAdd(BlueprintExecutionKey);
+	Stats.ExecutionCount++;
+
+	// 记录执行时间
+	double CurrentTime = FPlatformTime::Seconds();
+	float ExecutionTime = 0.001f; // 1ms 基础时间
+	Stats.TotalExecutionTime += ExecutionTime;
+	Stats.MinExecutionTime = FMath::Min(Stats.MinExecutionTime, ExecutionTime);
+	Stats.MaxExecutionTime = FMath::Max(Stats.MaxExecutionTime, ExecutionTime);
+	Stats.ExecutionTimes.Add(ExecutionTime);
+
+	// 保持执行时间数组在合理范围内
+	if (Stats.ExecutionTimes.Num() > 100)
+	{
+		Stats.ExecutionTimes.RemoveAt(0);
+	}
+
+	// 记录执行帧
+	FExecutionFrame Frame;
+	Frame.Timestamp = CurrentTime;
+	Frame.ObjectPtr = BlueprintExecutionKey;
+	Frame.ExecutionTime = ExecutionTime;
+	ExecutionFrames.Add(Frame);
+
+	// 保持执行帧数组在合理范围内
+	if (ExecutionFrames.Num() > 5000)
+	{
+		ExecutionFrames.RemoveAt(0, 100);
+	}
+
+	// 定期记录数据收集进度
+	if (CallCount % 1000 == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PROFILER] Data Collection: Total executions: %d"),
+			CallCount);
+	}
 }
 
 void FRuntimeProfiler::DisableBlueprintInstrumentation()
 {
-	// Disable blueprint execution monitoring
-	UE_LOG(LogTemp, Log, TEXT("Blueprint instrumentation disabled"));
+	// Disable blueprint execution monitoring for UE 5.6
+	if (bIsInstrumentationEnabled)
+	{
+		bIsInstrumentationEnabled = false;
+
+		// 取消委托绑定
+		if (InstrumentationDelegateHandle.IsValid())
+		{
+			FBlueprintCoreDelegates::OnScriptProfilingEvent.Remove(InstrumentationDelegateHandle);
+			InstrumentationDelegateHandle.Reset();
+			UE_LOG(LogTemp, Log, TEXT("Unbound from OnScriptProfilingEvent"));
+		}
+
+		// Clear the sampling timer
+		if (UWorld* World = GEngine ? GEngine->GetWorld() : nullptr)
+		{
+			World->GetTimerManager().ClearTimer(SamplingTimerHandle);
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("Blueprint instrumentation disabled"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Blueprint instrumentation was not enabled"));
+	}
 }
 
 void FRuntimeProfiler::RecordNodeExecution(const FFrame& Frame)
@@ -555,45 +752,184 @@ void FRuntimeProfiler::RecordNodeExecution(const FFrame& Frame)
 	{
 		return;
 	}
-	
+
 	// Get the current time for execution timing
 	double CurrentTime = FPlatformTime::Seconds();
-	
+
 	// Create a weak pointer to the object to avoid holding strong references
 	TWeakObjectPtr<UObject> ObjectPtr(Frame.Object);
-	
+
 	// Find or create execution stats for this object
 	FNodeExecutionStats& Stats = NodeStats.FindOrAdd(ObjectPtr);
 	Stats.ExecutionCount++;
-	
+
 	// Calculate execution time (simplified - in real implementation this would be more sophisticated)
 	float ExecutionTime = FMath::RandRange(0.0001f, 0.01f); // Mock execution time for now
 	Stats.TotalExecutionTime += ExecutionTime;
 	Stats.MinExecutionTime = FMath::Min(Stats.MinExecutionTime, ExecutionTime);
 	Stats.MaxExecutionTime = FMath::Max(Stats.MaxExecutionTime, ExecutionTime);
 	Stats.ExecutionTimes.Add(ExecutionTime);
-	
+
 	// Keep execution times array manageable
 	if (Stats.ExecutionTimes.Num() > 1000)
 	{
 		Stats.ExecutionTimes.RemoveAt(0, 100);
 	}
-	
+
 	// Record execution frame for timeline analysis
 	FExecutionFrame ExecutionFrame;
 	ExecutionFrame.Timestamp = CurrentTime;
 	ExecutionFrame.ObjectPtr = ObjectPtr;
 	ExecutionFrame.ExecutionTime = ExecutionTime;
 	ExecutionFrames.Add(ExecutionFrame);
-	
+
 	// Keep execution frames manageable
 	if (ExecutionFrames.Num() > 10000)
 	{
 		ExecutionFrames.RemoveAt(0, 1000);
 	}
-	
+
 	// Check for potential tick abuse
 	CheckForTickAbuse(Frame.Object, Stats);
+}
+
+void FRuntimeProfiler::CollectBlueprintExecutionData()
+{
+	// Collect blueprint execution data through sampling
+	// This is called periodically by the timer
+
+	if (CurrentState != ERecordingState::Recording)
+	{
+		return;
+	}
+
+	// Get the PIE world
+	UWorld* World = nullptr;
+	if (GEngine)
+	{
+		for (const FWorldContext& Context : GEngine->GetWorldContexts())
+		{
+			if (Context.World() && Context.World()->IsPlayInEditor())
+			{
+				World = Context.World();
+				break;
+			}
+		}
+	}
+
+	if (!World)
+	{
+		// No PIE world, try to get any world
+		World = GEngine ? GEngine->GetCurrentPlayWorld() : nullptr;
+	}
+
+	if (!World)
+	{
+		return;
+	}
+
+	double CurrentTime = FPlatformTime::Seconds();
+
+	// Iterate through all actors in the world using TObjectIterator
+	for (TObjectIterator<AActor> ActorIt; ActorIt; ++ActorIt)
+	{
+		AActor* Actor = *ActorIt;
+		if (!Actor || Actor->GetWorld() != World)
+		{
+			continue;
+		}
+
+		// Check if this actor has a blueprint generated class
+		if (UBlueprintGeneratedClass* BPClass = Cast<UBlueprintGeneratedClass>(Actor->GetClass()))
+		{
+			// Create a weak pointer to track this blueprint
+			TWeakObjectPtr<UObject> ObjectPtr(Actor);
+
+			// Find or create execution stats
+			FNodeExecutionStats& Stats = NodeStats.FindOrAdd(ObjectPtr);
+
+			// Increment execution count (we sample, not track every execution)
+			Stats.ExecutionCount++;
+
+			// Estimate execution time based on blueprint complexity
+			float EstimatedTime = 0.001f; // Base 1ms per tick
+
+			// Add complexity penalty
+			if (Actor->GetComponents().Num() > 10)
+			{
+				EstimatedTime += 0.0005f * (Actor->GetComponents().Num() - 10);
+			}
+
+			Stats.TotalExecutionTime += EstimatedTime;
+			Stats.MinExecutionTime = FMath::Min(Stats.MinExecutionTime, EstimatedTime);
+			Stats.MaxExecutionTime = FMath::Max(Stats.MaxExecutionTime, EstimatedTime);
+			Stats.ExecutionTimes.Add(EstimatedTime);
+
+			// Keep execution times array manageable
+			if (Stats.ExecutionTimes.Num() > 100)
+			{
+				Stats.ExecutionTimes.RemoveAt(0);
+			}
+
+			// Record execution frame
+			FExecutionFrame ExecutionFrame;
+			ExecutionFrame.Timestamp = CurrentTime;
+			ExecutionFrame.ObjectPtr = ObjectPtr;
+			ExecutionFrame.ExecutionTime = EstimatedTime;
+			ExecutionFrames.Add(ExecutionFrame);
+
+			// Keep execution frames manageable
+			if (ExecutionFrames.Num() > 5000)
+			{
+				ExecutionFrames.RemoveAt(0, 100);
+			}
+
+			// Check for tick abuse
+			CheckForTickAbuse(Actor, Stats);
+		}
+	}
+
+	// Also check blueprint components
+	for (TObjectIterator<UActorComponent> CompIt; CompIt; ++CompIt)
+	{
+		UActorComponent* Component = *CompIt;
+		if (!Component || !Component->IsRegistered() || !Component->GetOwner())
+		{
+			continue;
+		}
+
+		// Only check components in the current world
+		if (Component->GetWorld() != World)
+		{
+			continue;
+		}
+
+		// Only check components that are blueprint-based
+		if (UBlueprintGeneratedClass* BPClass = Cast<UBlueprintGeneratedClass>(Component->GetClass()))
+		{
+			TWeakObjectPtr<UObject> ObjectPtr(Component);
+			FNodeExecutionStats& Stats = NodeStats.FindOrAdd(ObjectPtr);
+			Stats.ExecutionCount++;
+
+			float EstimatedTime = 0.0005f; // Components are generally faster
+			Stats.TotalExecutionTime += EstimatedTime;
+			Stats.ExecutionTimes.Add(EstimatedTime);
+
+			if (Stats.ExecutionTimes.Num() > 50)
+			{
+				Stats.ExecutionTimes.RemoveAt(0);
+			}
+		}
+	}
+
+	// Log collection status periodically
+	static int32 CollectionCount = 0;
+	CollectionCount++;
+	if (CollectionCount % 10 == 0) // Log every 1 second (10 * 0.1s)
+	{
+		UE_LOG(LogTemp, VeryVerbose, TEXT("Blueprint profiler sampled %d actors and %d components"),
+			NodeStats.Num(), ExecutionFrames.Num());
+	}
 }
 
 void FRuntimeProfiler::CheckForTickAbuse(UObject* Object, const FNodeExecutionStats& Stats)
@@ -937,7 +1273,7 @@ bool FRuntimeProfiler::IsExpensiveFunction(const FString& FunctionName) const
 		TEXT("SpawnActor"),
 		TEXT("DestroyActor")
 	};
-	
+
 	for (const FString& ExpensiveFunc : ExpensiveFunctions)
 	{
 		if (FunctionName.Contains(ExpensiveFunc))
@@ -945,6 +1281,408 @@ bool FRuntimeProfiler::IsExpensiveFunction(const FString& FunctionName) const
 			return true;
 		}
 	}
-	
+
 	return false;
+}
+
+//============================================================
+// Blueprint Tracepoint System (Breakpoint-based Profiling)
+//============================================================
+
+void FRuntimeProfiler::SetupBlueprintTracepoints(UBlueprint* Blueprint)
+{
+	if (!Blueprint)
+	{
+		return;
+	}
+
+	// Skip if blueprint is not a valid blueprint type
+	if (!Blueprint->IsValidLowLevel())
+	{
+		return;
+	}
+
+	// Create or get the saved breakpoint state for this blueprint
+	FOriginalBreakpointInfo& SavedState = SavedBreakpointStates.FindOrAdd(Blueprint);
+	SavedState.Blueprint = Blueprint;
+	SavedState.OriginalBreakpointStates.Empty();
+
+	// Iterate through all graphs in the blueprint
+	TArray<UEdGraph*> AllGraphs;
+
+	// Add event graphs
+	for (UEdGraph* Graph : Blueprint->UbergraphPages)
+	{
+		if (Graph) AllGraphs.Add(Graph);
+	}
+
+	// Add function graphs
+	for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+	{
+		if (Graph) AllGraphs.Add(Graph);
+	}
+
+	// Add macro graphs
+	for (UEdGraph* Graph : Blueprint->MacroGraphs)
+	{
+		if (Graph) AllGraphs.Add(Graph);
+	}
+
+	int32 TracepointsCreated = 0;
+	int32 TracepointsEnabled = 0;
+
+	// Iterate through all graphs
+	for (UEdGraph* Graph : AllGraphs)
+	{
+		if (!Graph)
+		{
+			continue;
+		}
+
+		// Iterate through all nodes in the graph
+		for (UEdGraphNode* Node : Graph->Nodes)
+		{
+			if (!Node || !Node->IsValidLowLevel())
+			{
+				continue;
+			}
+
+			// Check if this node type can have breakpoints
+			// Most executable blueprint nodes can have breakpoints
+			bool bCanHaveBreakpoint = false;
+
+			// Check common executable node types
+			if (Cast<UK2Node_CallFunction>(Node) ||
+				Cast<UK2Node_Event>(Node) ||
+				Cast<UK2Node_CustomEvent>(Node) ||
+				Cast<UK2Node_MacroInstance>(Node) ||
+				Node->IsA(UK2Node::StaticClass()))
+			{
+				bCanHaveBreakpoint = true;
+			}
+
+			// Try to find existing breakpoint
+			FBlueprintBreakpoint* ExistingBreakpoint = FKismetDebugUtilities::FindBreakpointForNode(Node, Blueprint, true);
+
+			// Save the original state (whether it had a breakpoint and if it was enabled)
+			bool bHadBreakpoint = (ExistingBreakpoint != nullptr);
+			bool bWasEnabled = ExistingBreakpoint && ExistingBreakpoint->IsEnabled();
+			SavedState.OriginalBreakpointStates.Add(Node, bWasEnabled);
+
+			// Create or enable breakpoint for profiling
+			if (!ExistingBreakpoint)
+			{
+				// Create new breakpoint (enabled by default for tracing)
+				FKismetDebugUtilities::CreateBreakpoint(Blueprint, Node, true);
+				TracepointsCreated++;
+			}
+			else if (!bWasEnabled)
+			{
+				// Enable existing breakpoint for tracing
+				FKismetDebugUtilities::SetBreakpointEnabled(*ExistingBreakpoint, true);
+				TracepointsEnabled++;
+			}
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[PROFILER] Setup tracepoints for blueprint '%s': %d created, %d enabled"),
+		*Blueprint->GetName(), TracepointsCreated, TracepointsEnabled);
+}
+
+void FRuntimeProfiler::RemoveBlueprintTracepoints(UBlueprint* Blueprint)
+{
+	if (!Blueprint)
+	{
+		return;
+	}
+
+	// Check if we have saved state for this blueprint
+	FOriginalBreakpointInfo* SavedState = SavedBreakpointStates.Find(Blueprint);
+	if (!SavedState)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PROFILER] No saved breakpoint state found for blueprint '%s'"), *Blueprint->GetName());
+		return;
+	}
+
+	int32 BreakpointsRemoved = 0;
+	int32 BreakpointsRestored = 0;
+	int32 BreakpointsDisabled = 0;
+
+	// Restore all saved breakpoint states
+	for (const auto& BreakpointPair : SavedState->OriginalBreakpointStates)
+	{
+		TWeakObjectPtr<UEdGraphNode> Node = BreakpointPair.Key;
+		bool bOriginalState = BreakpointPair.Value;
+
+		if (!Node.IsValid())
+		{
+			continue;
+		}
+
+		// Find the breakpoint for this node
+		FBlueprintBreakpoint* Breakpoint = FKismetDebugUtilities::FindBreakpointForNode(Node.Get(), Blueprint, true);
+
+		if (Breakpoint)
+		{
+			if (bOriginalState)
+			{
+				// Restore to enabled state (user had it enabled)
+				FKismetDebugUtilities::SetBreakpointEnabled(*Breakpoint, true);
+				BreakpointsRestored++;
+			}
+			else
+			{
+				// The breakpoint didn't exist or was disabled before
+				// Remove it to clean up our tracepoint
+				FKismetDebugUtilities::RemoveBreakpointFromNode(Node.Get(), Blueprint);
+				BreakpointsRemoved++;
+			}
+		}
+	}
+
+	// Clear the saved state for this blueprint
+	SavedBreakpointStates.Remove(Blueprint);
+
+	UE_LOG(LogTemp, Log, TEXT("[PROFILER] Removed tracepoints from blueprint '%s': %d removed, %d restored"),
+		*Blueprint->GetName(), BreakpointsRemoved, BreakpointsRestored);
+}
+
+void FRuntimeProfiler::SetupTracepointsForAllBlueprints()
+{
+	UE_LOG(LogTemp, Log, TEXT("[PROFILER] Setting up tracepoints for all blueprints..."));
+
+	// Use asset registry to find all blueprint assets
+	TArray<FAssetData> BlueprintAssets;
+
+	// Get the asset registry
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+
+	// Find all blueprint assets
+	AssetRegistry.GetAssetsByClass(UBlueprint::StaticClass()->GetClassPathName(), BlueprintAssets, true);
+
+	UE_LOG(LogTemp, Log, TEXT("[PROFILER] Found %d blueprint assets"), BlueprintAssets.Num());
+
+	int32 SuccessfulSetups = 0;
+
+	// Setup tracepoints for each blueprint
+	for (const FAssetData& AssetData : BlueprintAssets)
+	{
+		if (UBlueprint* Blueprint = Cast<UBlueprint>(AssetData.GetAsset()))
+		{
+			SetupBlueprintTracepoints(Blueprint);
+			SuccessfulSetups++;
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[PROFILER] Successfully setup tracepoints for %d blueprints"), SuccessfulSetups);
+}
+
+void FRuntimeProfiler::RemoveTracepointsFromAllBlueprints()
+{
+	UE_LOG(LogTemp, Log, TEXT("[PROFILER] Removing tracepoints from all blueprints..."));
+
+	// Create a copy of the keys to avoid modification during iteration
+	TArray<TWeakObjectPtr<UBlueprint>> BlueprintsToCleanup;
+	SavedBreakpointStates.GetKeys(BlueprintsToCleanup);
+
+	int32 SuccessfulCleanups = 0;
+
+	for (const TWeakObjectPtr<UBlueprint>& BlueprintPtr : BlueprintsToCleanup)
+	{
+		if (BlueprintPtr.IsValid())
+		{
+			RemoveBlueprintTracepoints(BlueprintPtr.Get());
+			SuccessfulCleanups++;
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[PROFILER] Successfully removed tracepoints from %d blueprints"), SuccessfulCleanups);
+}
+
+void FRuntimeProfiler::OnScriptExceptionTrace(const UObject* ActiveObject, const FFrame& StackFrame, const FBlueprintExceptionInfo& Info)
+{
+	// CRITICAL: This callback must be EXTREMELY FAST
+	// It's called for EVERY blueprint node execution during profiling
+
+	// Early exit if recording is skipped (to prevent recursive events)
+	if (bSkipRecording)
+	{
+		return;
+	}
+
+	// Early exit if not recording
+	if (CurrentState != ERecordingState::Recording)
+	{
+		return;
+	}
+
+	// Increment event counter (for debugging)
+	TotalEventsProcessed++;
+
+	// Rate-limited logging (log once per second approximately)
+	double CurrentTime = FPlatformTime::Seconds();
+	if (CurrentTime - LastLoggingTime > 1.0)
+	{
+		LastLoggingTime = CurrentTime;
+		UE_LOG(LogTemp, VeryVerbose, TEXT("[PROFILER] Tracepoint events processed: %llu"), TotalEventsProcessed);
+	}
+
+	// Check if this is a tracepoint event (not a breakpoint or error)
+	if (Info.GetType() != EBlueprintExceptionType::Tracepoint &&
+		Info.GetType() != EBlueprintExceptionType::WireTracepoint)
+	{
+		// Only process tracepoints, ignore actual breakpoints and errors
+		return;
+	}
+
+	// Find the node from the stack frame
+	// StackFrame.Node is a UFunction*, we need to find the actual UEdGraphNode
+	const UClass* ClassContainingCode = FKismetDebugUtilities::FindClassForNode(ActiveObject, StackFrame.Node);
+	UBlueprint* Blueprint = (ClassContainingCode ? Cast<UBlueprint>(ClassContainingCode->ClassGeneratedBy) : nullptr);
+
+	if (!Blueprint)
+	{
+		return;
+	}
+
+	// Calculate the offset within the function
+	const int32 BreakpointOffset = StackFrame.Code - StackFrame.Node->Script.GetData() - 1;
+
+	// Find the actual blueprint node from the code location
+	UEdGraphNode* Node = nullptr;
+	const UBlueprintGeneratedClass* GeneratedClass = Cast<UBlueprintGeneratedClass>(ClassContainingCode);
+	if (GeneratedClass && GeneratedClass->DebugData.IsValid())
+	{
+		Node = GeneratedClass->DebugData.FindSourceNodeFromCodeLocation(StackFrame.Node, BreakpointOffset, true);
+	}
+
+	if (!Node)
+	{
+		return;
+	}
+
+	// Use node as the key for tracking execution
+	TWeakObjectPtr<UObject> NodeKey(Node);
+
+	// Thread-safe update of execution statistics
+	FScopeLock Lock(&DataMutex);
+
+	// Find or create stats for this node
+	FNodeExecutionStats& Stats = NodeStats.FindOrAdd(NodeKey);
+	Stats.ExecutionCount++;
+
+	// Record minimal timing information
+	// Note: We can't get actual execution time from a breakpoint callback
+	// So we use a minimal time unit for counting
+	constexpr float MinExecutionTime = 0.0001f; // 0.1ms minimum
+	Stats.TotalExecutionTime += MinExecutionTime;
+	Stats.MinExecutionTime = FMath::Min(Stats.MinExecutionTime, MinExecutionTime);
+	Stats.MaxExecutionTime = FMath::Max(Stats.MaxExecutionTime, MinExecutionTime);
+
+	// Keep execution times array bounded (only keep last 100 samples)
+	Stats.ExecutionTimes.Add(MinExecutionTime);
+	if (Stats.ExecutionTimes.Num() > 100)
+	{
+		Stats.ExecutionTimes.RemoveAt(0);
+	}
+
+	// Record execution frame for timeline analysis
+	FExecutionFrame Frame;
+	Frame.Timestamp = CurrentTime;
+	Frame.ObjectPtr = NodeKey;
+	Frame.ExecutionTime = MinExecutionTime;
+	ExecutionFrames.Add(Frame);
+
+	// Keep execution frames bounded (only keep last 5000 frames)
+	if (ExecutionFrames.Num() > 5000)
+	{
+		ExecutionFrames.RemoveAt(0, 100);
+	}
+}
+
+//============================================================
+// Async Tracepoint Setup (Timer-based Batch Processing)
+//============================================================
+
+void FRuntimeProfiler::SetupTracepointsForAllBlueprintsAsync()
+{
+	if (bIsSettingUpTracepoints)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PROFILER] Tracepoint setup already in progress"));
+		return;
+	}
+
+	bIsSettingUpTracepoints = true;
+	bTracepointsActive = false; // Will be set to true when setup completes
+	CurrentBlueprintIndex = 0;
+
+	// Get all blueprint assets
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+	AssetRegistry.GetAssetsByClass(UBlueprint::StaticClass()->GetClassPathName(), PendingBlueprints, true);
+
+	UE_LOG(LogTemp, Log, TEXT("[PROFILER] Starting async tracepoint setup for %d blueprints"), PendingBlueprints.Num());
+
+	// Start batch processing using timer
+	if (UWorld* World = GEngine ? GEngine->GetWorld() : nullptr)
+	{
+		// Process immediately, then schedule remaining batches
+		ProcessNextTracepointBatch();
+	}
+}
+
+void FRuntimeProfiler::ProcessNextTracepointBatch()
+{
+	if (!bIsSettingUpTracepoints)
+	{
+		return;
+	}
+
+	const int32 BatchSize = 10; // Process 10 blueprints per frame
+	int32 ProcessedThisBatch = 0;
+
+	while (CurrentBlueprintIndex < PendingBlueprints.Num() && ProcessedThisBatch < BatchSize)
+	{
+		const FAssetData& AssetData = PendingBlueprints[CurrentBlueprintIndex];
+		if (UBlueprint* Blueprint = Cast<UBlueprint>(AssetData.GetAsset()))
+		{
+			SetupBlueprintTracepoints(Blueprint);
+		}
+
+		CurrentBlueprintIndex++;
+		ProcessedThisBatch++;
+	}
+
+	// Check if we're done
+	if (CurrentBlueprintIndex >= PendingBlueprints.Num())
+	{
+		// Complete setup
+		bIsSettingUpTracepoints = false;
+		bTracepointsActive = true;
+		PendingBlueprints.Empty();
+		CurrentBlueprintIndex = 0;
+
+		// Clear timer
+		if (UWorld* World = GEngine ? GEngine->GetWorld() : nullptr)
+		{
+			World->GetTimerManager().ClearTimer(TracepointSetupTimerHandle);
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("[PROFILER] Async tracepoint setup complete: %d blueprints processed"),
+			PendingBlueprints.Num());
+
+		// Notify completion
+		OnTracepointSetupComplete.Broadcast(true);
+	}
+	else
+	{
+		// Schedule next batch
+		if (UWorld* World = GEngine ? GEngine->GetWorld() : nullptr)
+		{
+			World->GetTimerManager().SetTimerForNextTick(
+				FTimerDelegate::CreateRaw(this, &FRuntimeProfiler::ProcessNextTracepointBatch)
+			);
+		}
+	}
 }

@@ -20,6 +20,7 @@
 #include "BlueprintEditorModule.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "Kismet2/KismetEditorUtilities.h"
+#include "Kismet2/BlueprintEditorUtils.h"
 #include "Developer/DesktopPlatform/Public/IDesktopPlatform.h"
 #include "Developer/DesktopPlatform/Public/DesktopPlatformModule.h"
 #include "Misc/FileHelper.h"
@@ -39,30 +40,30 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 	CurrentRecordingState = ERecordingState::Stopped;
 	bIsStaticScanning = false;
 	bIsMemoryAnalyzing = false;
-	CurrentSortBy = TEXT("Severity");
-	CurrentFilterBy = TEXT("All");
+	CurrentSortBy = TEXT("严重程度");
+	CurrentFilterBy = TEXT("全部");
 
-	// Initialize sort and filter options
-	SortOptions.Add(MakeShared<FString>(TEXT("Name")));
-	SortOptions.Add(MakeShared<FString>(TEXT("Blueprint")));
-	SortOptions.Add(MakeShared<FString>(TEXT("Type")));
-	SortOptions.Add(MakeShared<FString>(TEXT("Category")));
-	SortOptions.Add(MakeShared<FString>(TEXT("Severity")));
-	SortOptions.Add(MakeShared<FString>(TEXT("Value")));
-	SortOptions.Add(MakeShared<FString>(TEXT("Execution Frequency")));
-	SortOptions.Add(MakeShared<FString>(TEXT("Memory Usage")));
+	// Initialize sort and filter options (翻译为中文)
+	SortOptions.Add(MakeShared<FString>(TEXT("名称")));
+	SortOptions.Add(MakeShared<FString>(TEXT("蓝图")));
+	SortOptions.Add(MakeShared<FString>(TEXT("类型")));
+	SortOptions.Add(MakeShared<FString>(TEXT("类别")));
+	SortOptions.Add(MakeShared<FString>(TEXT("严重程度")));
+	SortOptions.Add(MakeShared<FString>(TEXT("值")));
+	SortOptions.Add(MakeShared<FString>(TEXT("执行频率")));
+	SortOptions.Add(MakeShared<FString>(TEXT("内存使用")));
 
-	FilterOptions.Add(MakeShared<FString>(TEXT("All")));
-	FilterOptions.Add(MakeShared<FString>(TEXT("Runtime")));
-	FilterOptions.Add(MakeShared<FString>(TEXT("Lint")));
-	FilterOptions.Add(MakeShared<FString>(TEXT("Memory")));
-	FilterOptions.Add(MakeShared<FString>(TEXT("Critical")));
-	FilterOptions.Add(MakeShared<FString>(TEXT("High")));
-	FilterOptions.Add(MakeShared<FString>(TEXT("Medium")));
-	FilterOptions.Add(MakeShared<FString>(TEXT("Low")));
-	FilterOptions.Add(MakeShared<FString>(TEXT("Hot Nodes")));
-	FilterOptions.Add(MakeShared<FString>(TEXT("Dead Code")));
-	FilterOptions.Add(MakeShared<FString>(TEXT("Performance Issues")));
+	FilterOptions.Add(MakeShared<FString>(TEXT("全部")));
+	FilterOptions.Add(MakeShared<FString>(TEXT("运行时")));
+	FilterOptions.Add(MakeShared<FString>(TEXT("代码检查")));
+	FilterOptions.Add(MakeShared<FString>(TEXT("内存")));
+	FilterOptions.Add(MakeShared<FString>(TEXT("严重")));
+	FilterOptions.Add(MakeShared<FString>(TEXT("高")));
+	FilterOptions.Add(MakeShared<FString>(TEXT("中")));
+	FilterOptions.Add(MakeShared<FString>(TEXT("低")));
+	FilterOptions.Add(MakeShared<FString>(TEXT("热点节点")));
+	FilterOptions.Add(MakeShared<FString>(TEXT("死代码")));
+	FilterOptions.Add(MakeShared<FString>(TEXT("性能问题")));
 
 	// Bind analyzer events
 	StaticLinter->OnScanComplete.AddSP(this, &SBlueprintProfilerWidget::OnStaticScanComplete);
@@ -96,7 +97,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 						.Padding(0, 4)
 						[
 							SNew(STextBlock)
-							.Text(LOCTEXT("RuntimeProfilerTitle", "Runtime Profiler"))
+							.Text(LOCTEXT("RuntimeProfilerTitle", "运行时分析器"))
 							.Font(FAppStyle::GetFontStyle("DetailsView.CategoryFontStyle"))
 						]
 						
@@ -136,7 +137,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 							.Padding(0, 0, 4, 0)
 							[
 								SAssignNew(StartRecordingButton, SButton)
-								.Text(LOCTEXT("StartRecording", "Start"))
+								.Text(LOCTEXT("StartRecording", "开始"))
 								.OnClicked(this, &SBlueprintProfilerWidget::OnStartRuntimeRecording)
 								.IsEnabled(this, &SBlueprintProfilerWidget::CanStartRecording)
 								.ButtonStyle(FAppStyle::Get(), "FlatButton.Success")
@@ -147,7 +148,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 							.Padding(0, 0, 4, 0)
 							[
 								SAssignNew(PauseRecordingButton, SButton)
-								.Text(LOCTEXT("PauseRecording", "Pause"))
+								.Text(LOCTEXT("PauseRecording", "暂停"))
 								.OnClicked(this, &SBlueprintProfilerWidget::OnPauseRuntimeRecording)
 								.IsEnabled(this, &SBlueprintProfilerWidget::CanPauseRecording)
 								.ButtonStyle(FAppStyle::Get(), "FlatButton.Warning")
@@ -158,7 +159,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 							.Padding(0, 0, 4, 0)
 							[
 								SAssignNew(ResumeRecordingButton, SButton)
-								.Text(LOCTEXT("ResumeRecording", "Resume"))
+								.Text(LOCTEXT("ResumeRecording", "继续"))
 								.OnClicked(this, &SBlueprintProfilerWidget::OnResumeRuntimeRecording)
 								.IsEnabled(this, &SBlueprintProfilerWidget::CanResumeRecording)
 								.ButtonStyle(FAppStyle::Get(), "FlatButton.Primary")
@@ -169,7 +170,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 							.Padding(0, 0, 4, 0)
 							[
 								SAssignNew(StopRecordingButton, SButton)
-								.Text(LOCTEXT("StopRecording", "Stop"))
+								.Text(LOCTEXT("StopRecording", "停止"))
 								.OnClicked(this, &SBlueprintProfilerWidget::OnStopRuntimeRecording)
 								.IsEnabled(this, &SBlueprintProfilerWidget::CanStopRecording)
 								.ButtonStyle(FAppStyle::Get(), "FlatButton.Danger")
@@ -179,7 +180,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 							.AutoWidth()
 							[
 								SAssignNew(ResetDataButton, SButton)
-								.Text(LOCTEXT("ResetData", "Reset"))
+								.Text(LOCTEXT("ResetData", "重置"))
 								.OnClicked(this, &SBlueprintProfilerWidget::OnResetRuntimeData)
 								.IsEnabled(this, &SBlueprintProfilerWidget::CanResetData)
 							]
@@ -196,10 +197,10 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 							.Padding(0, 0, 4, 0)
 							[
 								SAssignNew(SaveSessionButton, SButton)
-								.Text(LOCTEXT("SaveSession", "Save Session"))
+								.Text(LOCTEXT("SaveSession", "保存会话"))
 								.OnClicked(this, &SBlueprintProfilerWidget::OnSaveSessionData)
 								.IsEnabled(this, &SBlueprintProfilerWidget::CanSaveSession)
-								.ToolTipText(LOCTEXT("SaveSessionTooltip", "Save current session data to file"))
+								.ToolTipText(LOCTEXT("SaveSessionTooltip", "保存当前会话数据到文件"))
 							]
 							
 							+ SHorizontalBox::Slot()
@@ -207,19 +208,19 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 							.Padding(0, 0, 4, 0)
 							[
 								SAssignNew(LoadSessionButton, SButton)
-								.Text(LOCTEXT("LoadSession", "Load Session"))
+								.Text(LOCTEXT("LoadSession", "加载会话"))
 								.OnClicked(this, &SBlueprintProfilerWidget::OnLoadSessionData)
 								.IsEnabled(this, &SBlueprintProfilerWidget::CanLoadSession)
-								.ToolTipText(LOCTEXT("LoadSessionTooltip", "Load session data from file"))
+								.ToolTipText(LOCTEXT("LoadSessionTooltip", "从文件加载会话数据"))
 							]
 							
 							+ SHorizontalBox::Slot()
 							.AutoWidth()
 							[
 								SAssignNew(ClearHistoryButton, SButton)
-								.Text(LOCTEXT("ClearHistory", "Clear History"))
+								.Text(LOCTEXT("ClearHistory", "清除历史"))
 								.OnClicked(this, &SBlueprintProfilerWidget::OnClearSessionHistory)
-								.ToolTipText(LOCTEXT("ClearHistoryTooltip", "Clear all session history"))
+								.ToolTipText(LOCTEXT("ClearHistoryTooltip", "清除所有会话历史"))
 							]
 						]
 						
@@ -229,7 +230,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 						.Padding(0, 8, 0, 4)
 						[
 							SNew(STextBlock)
-							.Text(LOCTEXT("PIEIntegrationTitle", "PIE Integration"))
+							.Text(LOCTEXT("PIEIntegrationTitle", "PIE 集成"))
 							.Font(FAppStyle::GetFontStyle("DetailsView.CategoryFontStyle"))
 						]
 						
@@ -241,8 +242,8 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 							.Content()
 							[
 								SNew(STextBlock)
-								.Text(LOCTEXT("AutoStartPIE", "Auto-start recording on PIE"))
-								.ToolTipText(LOCTEXT("AutoStartPIETooltip", "Automatically start recording when Play In Editor begins"))
+								.Text(LOCTEXT("AutoStartPIE", "PIE 时自动开始录制"))
+								.ToolTipText(LOCTEXT("AutoStartPIETooltip", "在编辑器中开始播放时自动开始录制"))
 							]
 							.OnCheckStateChanged_Lambda([this](ECheckBoxState NewState)
 							{
@@ -262,8 +263,8 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 							.Content()
 							[
 								SNew(STextBlock)
-								.Text(LOCTEXT("AutoStopPIE", "Auto-stop recording on PIE end"))
-								.ToolTipText(LOCTEXT("AutoStopPIETooltip", "Automatically stop recording when Play In Editor ends"))
+								.Text(LOCTEXT("AutoStopPIE", "PIE 结束时自动停止录制"))
+								.ToolTipText(LOCTEXT("AutoStopPIETooltip", "在编辑器中结束播放时自动停止录制"))
 							]
 							.OnCheckStateChanged_Lambda([this](ECheckBoxState NewState)
 							{
@@ -280,7 +281,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 						.Padding(0, 8, 0, 4)
 						[
 							SNew(STextBlock)
-							.Text(LOCTEXT("StaticLinterTitle", "Static Linter"))
+							.Text(LOCTEXT("StaticLinterTitle", "静态分析"))
 							.Font(FAppStyle::GetFontStyle("DetailsView.CategoryFontStyle"))
 						]
 						
@@ -294,7 +295,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 							.Padding(0, 0, 4, 0)
 							[
 								SAssignNew(StartScanButton, SButton)
-								.Text(LOCTEXT("StartScan", "Scan Project"))
+								.Text(LOCTEXT("StartScan", "扫描项目"))
 								.OnClicked(this, &SBlueprintProfilerWidget::OnStartStaticScan)
 								.IsEnabled(this, &SBlueprintProfilerWidget::CanStartScan)
 							]
@@ -304,7 +305,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 							.Padding(0, 0, 4, 0)
 							[
 								SAssignNew(ScanFolderButton, SButton)
-								.Text(LOCTEXT("ScanFolders", "Scan Folders"))
+								.Text(LOCTEXT("ScanFolders", "扫描文件夹"))
 								.OnClicked(this, &SBlueprintProfilerWidget::OnScanSelectedFolders)
 								.IsEnabled(this, &SBlueprintProfilerWidget::CanStartScan)
 							]
@@ -313,7 +314,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 							.AutoWidth()
 							[
 								SAssignNew(CancelScanButton, SButton)
-								.Text(LOCTEXT("CancelScan", "Cancel Scan"))
+								.Text(LOCTEXT("CancelScan", "取消扫描"))
 								.OnClicked(this, &SBlueprintProfilerWidget::OnCancelStaticScan)
 								.IsEnabled(this, &SBlueprintProfilerWidget::CanCancelScan)
 							]
@@ -325,7 +326,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 						.Padding(0, 8, 0, 4)
 						[
 							SNew(STextBlock)
-							.Text(LOCTEXT("MemoryAnalyzerTitle", "Memory Analyzer"))
+							.Text(LOCTEXT("MemoryAnalyzerTitle", "内存分析器"))
 							.Font(FAppStyle::GetFontStyle("DetailsView.CategoryFontStyle"))
 						]
 						
@@ -334,7 +335,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 						.Padding(0, 2)
 						[
 							SAssignNew(StartMemoryAnalysisButton, SButton)
-							.Text(LOCTEXT("StartMemoryAnalysis", "Analyze Memory"))
+							.Text(LOCTEXT("StartMemoryAnalysis", "分析内存"))
 							.OnClicked(this, &SBlueprintProfilerWidget::OnStartMemoryAnalysis)
 							.IsEnabled(this, &SBlueprintProfilerWidget::CanStartMemoryAnalysis)
 						]
@@ -345,7 +346,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 						.Padding(0, 8, 0, 4)
 						[
 							SNew(STextBlock)
-							.Text(LOCTEXT("StatusTitle", "Status"))
+							.Text(LOCTEXT("StatusTitle", "状态"))
 							.Font(FAppStyle::GetFontStyle("DetailsView.CategoryFontStyle"))
 						]
 						
@@ -354,7 +355,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 						.Padding(0, 2)
 						[
 							SAssignNew(StatusText, STextBlock)
-							.Text(LOCTEXT("StatusReady", "Ready"))
+							.Text(LOCTEXT("StatusReady", "就绪"))
 						]
 						
 						+ SVerticalBox::Slot()
@@ -390,7 +391,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 						.Padding(0, 8, 0, 4)
 						[
 							SNew(STextBlock)
-							.Text(LOCTEXT("ExportTitle", "Export"))
+							.Text(LOCTEXT("ExportTitle", "导出"))
 							.Font(FAppStyle::GetFontStyle("DetailsView.CategoryFontStyle"))
 						]
 						
@@ -404,7 +405,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 							.Padding(0, 0, 4, 0)
 							[
 								SNew(SButton)
-								.Text(LOCTEXT("ExportCSV", "Export CSV"))
+								.Text(LOCTEXT("ExportCSV", "导出 CSV"))
 								.OnClicked(this, &SBlueprintProfilerWidget::OnExportToCSV)
 								.IsEnabled(this, &SBlueprintProfilerWidget::HasDataToExport)
 							]
@@ -413,7 +414,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 							.AutoWidth()
 							[
 								SNew(SButton)
-								.Text(LOCTEXT("ExportJSON", "Export JSON"))
+								.Text(LOCTEXT("ExportJSON", "导出 JSON"))
 								.OnClicked(this, &SBlueprintProfilerWidget::OnExportToJSON)
 								.IsEnabled(this, &SBlueprintProfilerWidget::HasDataToExport)
 							]
@@ -452,7 +453,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 							.Padding(0, 0, 4, 0)
 							[
 								SAssignNew(SearchBox, SSearchBox)
-								.HintText(LOCTEXT("SearchHint", "Search nodes, blueprints, categories..."))
+								.HintText(LOCTEXT("SearchHint", "搜索节点、蓝图、类别..."))
 								.OnTextChanged(this, &SBlueprintProfilerWidget::OnSearchTextChanged)
 							]
 							
@@ -462,8 +463,8 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 							.Padding(0, 0, 4, 0)
 							[
 								SNew(SButton)
-								.Text(LOCTEXT("ClearFilters", "Clear"))
-								.ToolTipText(LOCTEXT("ClearFiltersTooltip", "Clear all search and filter criteria"))
+								.Text(LOCTEXT("ClearFilters", "清除"))
+								.ToolTipText(LOCTEXT("ClearFiltersTooltip", "清除所有搜索和筛选条件"))
 								.OnClicked_Lambda([this]()
 								{
 									ClearFilters();
@@ -476,7 +477,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 							.AutoWidth()
 							[
 								SNew(SButton)
-								.Text(LOCTEXT("Refresh", "Refresh"))
+								.Text(LOCTEXT("Refresh", "刷新"))
 								.OnClicked(this, &SBlueprintProfilerWidget::OnRefreshData)
 							]
 						]
@@ -494,7 +495,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 							.Padding(0, 0, 4, 0)
 							[
 								SNew(STextBlock)
-								.Text(LOCTEXT("SortBy", "Sort by:"))
+								.Text(LOCTEXT("SortBy", "排序："))
 								.Margin(FMargin(0, 4, 4, 0))
 							]
 							
@@ -524,7 +525,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 							.Padding(0, 0, 4, 0)
 							[
 								SNew(STextBlock)
-								.Text(LOCTEXT("FilterBy", "Filter:"))
+								.Text(LOCTEXT("FilterBy", "筛选："))
 								.Margin(FMargin(0, 4, 4, 0))
 							]
 							
@@ -559,8 +560,8 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 							.Padding(0, 0, 2, 0)
 							[
 								SNew(SButton)
-								.Text(LOCTEXT("QuickFilterCritical", "Critical"))
-								.ToolTipText(LOCTEXT("QuickFilterCriticalTooltip", "Show only critical severity items"))
+								.Text(LOCTEXT("QuickFilterCritical", "严重"))
+								.ToolTipText(LOCTEXT("QuickFilterCriticalTooltip", "仅显示严重级别的项目"))
 								.ButtonStyle(FAppStyle::Get(), "FlatButton.Danger")
 								.OnClicked_Lambda([this]()
 								{
@@ -574,8 +575,8 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 							.Padding(2, 0, 2, 0)
 							[
 								SNew(SButton)
-								.Text(LOCTEXT("QuickFilterRuntime", "Runtime"))
-								.ToolTipText(LOCTEXT("QuickFilterRuntimeTooltip", "Show only runtime profiling data"))
+								.Text(LOCTEXT("QuickFilterRuntime", "运行时"))
+								.ToolTipText(LOCTEXT("QuickFilterRuntimeTooltip", "仅显示运行时性能数据"))
 								.ButtonStyle(FAppStyle::Get(), "FlatButton.Primary")
 								.OnClicked_Lambda([this]()
 								{
@@ -589,8 +590,8 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 							.Padding(2, 0, 2, 0)
 							[
 								SNew(SButton)
-								.Text(LOCTEXT("QuickFilterLint", "Lint"))
-								.ToolTipText(LOCTEXT("QuickFilterLintTooltip", "Show only static analysis issues"))
+								.Text(LOCTEXT("QuickFilterLint", "代码检查"))
+								.ToolTipText(LOCTEXT("QuickFilterLintTooltip", "仅显示静态分析问题"))
 								.ButtonStyle(FAppStyle::Get(), "FlatButton.Warning")
 								.OnClicked_Lambda([this]()
 								{
@@ -604,8 +605,8 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 							.Padding(2, 0, 0, 0)
 							[
 								SNew(SButton)
-								.Text(LOCTEXT("QuickFilterMemory", "Memory"))
-								.ToolTipText(LOCTEXT("QuickFilterMemoryTooltip", "Show only memory analysis data"))
+								.Text(LOCTEXT("QuickFilterMemory", "内存"))
+								.ToolTipText(LOCTEXT("QuickFilterMemoryTooltip", "仅显示内存分析数据"))
 								.ButtonStyle(FAppStyle::Get(), "FlatButton.Success")
 								.OnClicked_Lambda([this]()
 								{
@@ -629,27 +630,27 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 						(
 							SNew(SHeaderRow)
 							+ SHeaderRow::Column("Type")
-							.DefaultLabel(LOCTEXT("TypeColumn", "Type"))
+							.DefaultLabel(LOCTEXT("TypeColumn", "类型"))
 							.FillWidth(0.1f)
 							
 							+ SHeaderRow::Column("Name")
-							.DefaultLabel(LOCTEXT("NameColumn", "Name"))
+							.DefaultLabel(LOCTEXT("NameColumn", "名称"))
 							.FillWidth(0.3f)
 							
 							+ SHeaderRow::Column("Blueprint")
-							.DefaultLabel(LOCTEXT("BlueprintColumn", "Blueprint"))
+							.DefaultLabel(LOCTEXT("BlueprintColumn", "蓝图"))
 							.FillWidth(0.25f)
 							
 							+ SHeaderRow::Column("Category")
-							.DefaultLabel(LOCTEXT("CategoryColumn", "Category"))
+							.DefaultLabel(LOCTEXT("CategoryColumn", "类别"))
 							.FillWidth(0.15f)
 							
 							+ SHeaderRow::Column("Value")
-							.DefaultLabel(LOCTEXT("ValueColumn", "Value"))
+							.DefaultLabel(LOCTEXT("ValueColumn", "值"))
 							.FillWidth(0.1f)
 							
 							+ SHeaderRow::Column("Severity")
-							.DefaultLabel(LOCTEXT("SeverityColumn", "Severity"))
+							.DefaultLabel(LOCTEXT("SeverityColumn", "严重程度"))
 							.FillWidth(0.1f)
 						)
 					]
@@ -661,11 +662,11 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 	// Set initial combo box selections
 	if (SortOptions.Num() > 0)
 	{
-		SortComboBox->SetSelectedItem(SortOptions[3]); // Severity
+		SortComboBox->SetSelectedItem(SortOptions[4]); // 严重程度 (Severity - 索引4)
 	}
 	if (FilterOptions.Num() > 0)
 	{
-		FilterComboBox->SetSelectedItem(FilterOptions[0]); // All
+		FilterComboBox->SetSelectedItem(FilterOptions[0]); // 全部 (All)
 	}
 
 	RefreshData();
@@ -785,7 +786,7 @@ FReply SBlueprintProfilerWidget::OnStartRuntimeRecording()
 		if (StatusText.IsValid())
 		{
 			StatusText->SetText(FText::Format(
-				LOCTEXT("StatusRecording", "Recording runtime data - Session: {0}"),
+				LOCTEXT("StatusRecording", "正在录制运行时数据 - 会话：{0}"),
 				FText::FromString(SessionName)
 			));
 		}
@@ -809,7 +810,7 @@ FReply SBlueprintProfilerWidget::OnStopRuntimeRecording()
 		{
 			FRecordingSession Session = RuntimeProfiler->GetCurrentSession();
 			StatusText->SetText(FText::Format(
-				LOCTEXT("StatusRecordingStopped", "Recording stopped - Session: {0} (Duration: {1}s, Nodes: {2})"),
+				LOCTEXT("StatusRecordingStopped", "录制已停止 - 会话：{0}（时长：{1}秒，节点：{2}）"),
 				FText::FromString(Session.SessionName),
 				FText::AsNumber(static_cast<int64>(FMath::RoundToFloat(Session.Duration))),
 				FText::AsNumber(Session.TotalNodesRecorded)
@@ -830,7 +831,7 @@ FReply SBlueprintProfilerWidget::OnPauseRuntimeRecording()
 		
 		if (StatusText.IsValid())
 		{
-			StatusText->SetText(LOCTEXT("StatusRecordingPaused", "Recording paused"));
+			StatusText->SetText(LOCTEXT("StatusRecordingPaused", "录制已暂停"));
 		}
 	}
 	return FReply::Handled();
@@ -847,7 +848,7 @@ FReply SBlueprintProfilerWidget::OnResumeRuntimeRecording()
 		
 		if (StatusText.IsValid())
 		{
-			StatusText->SetText(LOCTEXT("StatusRecordingResumed", "Recording resumed"));
+			StatusText->SetText(LOCTEXT("StatusRecordingResumed", "录制已继续"));
 		}
 	}
 	return FReply::Handled();
@@ -876,7 +877,7 @@ FReply SBlueprintProfilerWidget::OnResetRuntimeData()
 		
 		if (StatusText.IsValid())
 		{
-			StatusText->SetText(LOCTEXT("StatusDataReset", "Runtime data reset"));
+			StatusText->SetText(LOCTEXT("StatusDataReset", "运行时数据已重置"));
 		}
 	}
 	return FReply::Handled();
@@ -892,7 +893,7 @@ FReply SBlueprintProfilerWidget::OnSaveSessionData()
 		{
 			FRecordingSession Session = RuntimeProfiler->GetCurrentSession();
 			StatusText->SetText(FText::Format(
-				LOCTEXT("StatusSessionSaved", "Session data saved: {0}"),
+				LOCTEXT("StatusSessionSaved", "会话数据已保存：{0}"),
 				FText::FromString(Session.SessionName)
 			));
 		}
@@ -912,11 +913,11 @@ FReply SBlueprintProfilerWidget::OnLoadSessionData()
 		{
 			if (bLoaded)
 			{
-				StatusText->SetText(LOCTEXT("StatusSessionLoaded", "Session data loaded successfully"));
+				StatusText->SetText(LOCTEXT("StatusSessionLoaded", "会话数据加载成功"));
 			}
 			else
 			{
-				StatusText->SetText(LOCTEXT("StatusSessionLoadFailed", "Failed to load session data"));
+				StatusText->SetText(LOCTEXT("StatusSessionLoadFailed", "加载会话数据失败"));
 			}
 		}
 	}
@@ -931,7 +932,7 @@ FReply SBlueprintProfilerWidget::OnClearSessionHistory()
 		
 		if (StatusText.IsValid())
 		{
-			StatusText->SetText(LOCTEXT("StatusHistoryCleared", "Session history cleared"));
+			StatusText->SetText(LOCTEXT("StatusHistoryCleared", "会话历史已清除"));
 		}
 	}
 	return FReply::Handled();
@@ -945,7 +946,7 @@ FReply SBlueprintProfilerWidget::OnStartStaticScan()
 		
 		if (StatusText.IsValid())
 		{
-			StatusText->SetText(LOCTEXT("StatusScanning", "Scanning blueprints..."));
+			StatusText->SetText(LOCTEXT("StatusScanning", "正在扫描蓝图..."));
 		}
 		
 		if (ProgressBar.IsValid())
@@ -989,7 +990,7 @@ FReply SBlueprintProfilerWidget::OnScanSelectedFolders()
 			if (StatusText.IsValid())
 			{
 				StatusText->SetText(FText::Format(
-					LOCTEXT("StatusScanningFolders", "Scanning {0} selected folders..."),
+					LOCTEXT("StatusScanningFolders", "正在扫描 {0} 个选中文件夹..."),
 					FText::AsNumber(SelectedFolders.Num())
 				));
 			}
@@ -1017,7 +1018,7 @@ FReply SBlueprintProfilerWidget::OnScanSelectedFolders()
 		{
 			if (StatusText.IsValid())
 			{
-				StatusText->SetText(LOCTEXT("StatusNoFoldersSelected", "No folders selected for scanning"));
+				StatusText->SetText(LOCTEXT("StatusNoFoldersSelected", "未选择要扫描的文件夹"));
 			}
 		}
 	}
@@ -1033,7 +1034,7 @@ FReply SBlueprintProfilerWidget::OnCancelStaticScan()
 		
 		if (StatusText.IsValid())
 		{
-			StatusText->SetText(LOCTEXT("StatusScanCancelled", "Scan cancelled - partial results preserved"));
+			StatusText->SetText(LOCTEXT("StatusScanCancelled", "扫描已取消 - 保留了部分结果"));
 		}
 		
 		if (ProgressBar.IsValid())
@@ -1062,7 +1063,7 @@ FReply SBlueprintProfilerWidget::OnStartMemoryAnalysis()
 		
 		if (StatusText.IsValid())
 		{
-			StatusText->SetText(LOCTEXT("StatusAnalyzing", "Analyzing memory..."));
+			StatusText->SetText(LOCTEXT("StatusAnalyzing", "正在分析内存..."));
 		}
 		
 		// Get all blueprint assets to analyze
@@ -1092,7 +1093,7 @@ FReply SBlueprintProfilerWidget::OnStartMemoryAnalysis()
 				if (StatusText.IsValid())
 				{
 					StatusText->SetText(FText::Format(
-						LOCTEXT("StatusMemoryComplete", "Memory analysis complete. Found {0} large resources."),
+						LOCTEXT("StatusMemoryComplete", "内存分析完成。发现 {0} 个大资源。"),
 						FText::AsNumber(LargeResources.Num())
 					));
 				}
@@ -1102,7 +1103,7 @@ FReply SBlueprintProfilerWidget::OnStartMemoryAnalysis()
 		{
 			if (StatusText.IsValid())
 			{
-				StatusText->SetText(LOCTEXT("StatusNoBlueprints", "No blueprints found to analyze"));
+				StatusText->SetText(LOCTEXT("StatusNoBlueprints", "未找到要分析的蓝图"));
 			}
 		}
 		
@@ -1160,7 +1161,7 @@ FReply SBlueprintProfilerWidget::OnExportToCSV()
 				if (StatusText.IsValid())
 				{
 					StatusText->SetText(FText::Format(
-						LOCTEXT("StatusExportSuccess", "Exported {0} items to {1}"),
+						LOCTEXT("StatusExportSuccess", "已导出 {0} 个项目到 {1}"),
 						FText::AsNumber(FilteredDataItems.Num()),
 						FText::FromString(FPaths::GetCleanFilename(FilePath))
 					));
@@ -1170,7 +1171,7 @@ FReply SBlueprintProfilerWidget::OnExportToCSV()
 			{
 				if (StatusText.IsValid())
 				{
-					StatusText->SetText(LOCTEXT("StatusExportFailed", "Failed to save CSV file"));
+					StatusText->SetText(LOCTEXT("StatusExportFailed", "保存 CSV 文件失败"));
 				}
 			}
 		}
@@ -1238,7 +1239,7 @@ FReply SBlueprintProfilerWidget::OnExportToJSON()
 				if (StatusText.IsValid())
 				{
 					StatusText->SetText(FText::Format(
-						LOCTEXT("StatusExportSuccess", "Exported {0} items to {1}"),
+						LOCTEXT("StatusExportSuccess", "已导出 {0} 个项目到 {1}"),
 						FText::AsNumber(FilteredDataItems.Num()),
 						FText::FromString(FPaths::GetCleanFilename(FilePath))
 					));
@@ -1248,7 +1249,7 @@ FReply SBlueprintProfilerWidget::OnExportToJSON()
 			{
 				if (StatusText.IsValid())
 				{
-					StatusText->SetText(LOCTEXT("StatusExportFailed", "Failed to save JSON file"));
+					StatusText->SetText(LOCTEXT("StatusExportFailed", "保存 JSON 文件失败"));
 				}
 			}
 		}
@@ -1263,7 +1264,7 @@ FReply SBlueprintProfilerWidget::OnRefreshData()
 	if (StatusText.IsValid())
 	{
 		StatusText->SetText(FText::Format(
-			LOCTEXT("StatusRefreshed", "Refreshed - {0} items"),
+			LOCTEXT("StatusRefreshed", "已刷新 - {0} 个项目"),
 			FText::AsNumber(FilteredDataItems.Num())
 		));
 	}
@@ -1421,14 +1422,14 @@ void SBlueprintProfilerWidget::OnSearchTextChanged(const FText& Text)
 		if (CurrentSearchText.IsEmpty())
 		{
 			StatusText->SetText(FText::Format(
-				LOCTEXT("StatusShowingAll", "Showing all {0} items"),
+				LOCTEXT("StatusShowingAll", "显示所有 {0} 个项目"),
 				FText::AsNumber(FilteredDataItems.Num())
 			));
 		}
 		else
 		{
 			StatusText->SetText(FText::Format(
-				LOCTEXT("StatusSearchResults", "Search '{0}': {1} of {2} items"),
+				LOCTEXT("StatusSearchResults", "搜索 '{0}'：{2} 项中的 {1} 项"),
 				FText::FromString(CurrentSearchText),
 				FText::AsNumber(FilteredDataItems.Num()),
 				FText::AsNumber(AllDataItems.Num())
@@ -1472,14 +1473,14 @@ void SBlueprintProfilerWidget::OnFilterSelectionChanged(
 void SBlueprintProfilerWidget::UpdateFilteredData()
 {
 	FilteredDataItems.Empty();
-	
+
 	for (const TSharedPtr<FProfilerDataItem>& Item : AllDataItems)
 	{
 		if (!Item.IsValid())
 		{
 			continue;
 		}
-		
+
 		// Apply search filter with enhanced matching
 		if (!CurrentSearchText.IsEmpty())
 		{
@@ -1488,75 +1489,75 @@ void SBlueprintProfilerWidget::UpdateFilteredData()
 				continue;
 			}
 		}
-		
-		// Apply type/severity filter with enhanced options
-		if (CurrentFilterBy != TEXT("All"))
+
+		// Apply type/severity filter with enhanced options (使用中文筛选值)
+		if (CurrentFilterBy != TEXT("全部"))
 		{
 			bool bMatchesFilter = false;
-			
+
 			// Type filters
-			if (CurrentFilterBy == TEXT("Runtime") && Item->Type == EProfilerDataType::Runtime)
+			if (CurrentFilterBy == TEXT("运行时") && Item->Type == EProfilerDataType::Runtime)
 			{
 				bMatchesFilter = true;
 			}
-			else if (CurrentFilterBy == TEXT("Lint") && Item->Type == EProfilerDataType::Lint)
+			else if (CurrentFilterBy == TEXT("代码检查") && Item->Type == EProfilerDataType::Lint)
 			{
 				bMatchesFilter = true;
 			}
-			else if (CurrentFilterBy == TEXT("Memory") && Item->Type == EProfilerDataType::Memory)
+			else if (CurrentFilterBy == TEXT("内存") && Item->Type == EProfilerDataType::Memory)
 			{
 				bMatchesFilter = true;
 			}
 			// Severity filters
-			else if (CurrentFilterBy == TEXT("Critical") && Item->Severity == ESeverity::Critical)
+			else if (CurrentFilterBy == TEXT("严重") && Item->Severity == ESeverity::Critical)
 			{
 				bMatchesFilter = true;
 			}
-			else if (CurrentFilterBy == TEXT("High") && Item->Severity == ESeverity::High)
+			else if (CurrentFilterBy == TEXT("高") && Item->Severity == ESeverity::High)
 			{
 				bMatchesFilter = true;
 			}
-			else if (CurrentFilterBy == TEXT("Medium") && Item->Severity == ESeverity::Medium)
+			else if (CurrentFilterBy == TEXT("中") && Item->Severity == ESeverity::Medium)
 			{
 				bMatchesFilter = true;
 			}
-			else if (CurrentFilterBy == TEXT("Low") && Item->Severity == ESeverity::Low)
+			else if (CurrentFilterBy == TEXT("低") && Item->Severity == ESeverity::Low)
 			{
 				bMatchesFilter = true;
 			}
 			// Category filters
-			else if (CurrentFilterBy == TEXT("Hot Nodes") && 
-					(Item->Category.Contains(TEXT("Hot")) || Item->Category.Contains(TEXT("High Execution"))))
+			else if (CurrentFilterBy == TEXT("热点节点") &&
+					(Item->Category.Contains(TEXT("Hot")) || Item->Category.Contains(TEXT("高频执行"))))
 			{
 				bMatchesFilter = true;
 			}
-			else if (CurrentFilterBy == TEXT("Dead Code") && 
-					(Item->Category.Contains(TEXT("Dead")) || Item->Category.Contains(TEXT("Orphan"))))
+			else if (CurrentFilterBy == TEXT("死代码") &&
+					(Item->Category.Contains(TEXT("Dead")) || Item->Category.Contains(TEXT("孤立节点"))))
 			{
 				bMatchesFilter = true;
 			}
-			else if (CurrentFilterBy == TEXT("Performance Issues") && 
+			else if (CurrentFilterBy == TEXT("性能问题") &&
 					(Item->Category.Contains(TEXT("Cast")) || Item->Category.Contains(TEXT("Tick"))))
 			{
 				bMatchesFilter = true;
 			}
-			
+
 			if (!bMatchesFilter)
 			{
 				continue;
 			}
 		}
-		
+
 		FilteredDataItems.Add(Item);
 	}
-	
+
 	// Apply current sort
 	SortData(CurrentSortBy);
 }
 
 void SBlueprintProfilerWidget::SortData(const FString& SortBy)
 {
-	if (SortBy == TEXT("Name"))
+	if (SortBy == TEXT("名称"))
 	{
 		FilteredDataItems.Sort([](const TSharedPtr<FProfilerDataItem>& A, const TSharedPtr<FProfilerDataItem>& B)
 		{
@@ -1564,7 +1565,7 @@ void SBlueprintProfilerWidget::SortData(const FString& SortBy)
 			return A->Name.Compare(B->Name, ESearchCase::IgnoreCase) < 0;
 		});
 	}
-	else if (SortBy == TEXT("Blueprint"))
+	else if (SortBy == TEXT("蓝图"))
 	{
 		FilteredDataItems.Sort([](const TSharedPtr<FProfilerDataItem>& A, const TSharedPtr<FProfilerDataItem>& B)
 		{
@@ -1578,7 +1579,7 @@ void SBlueprintProfilerWidget::SortData(const FString& SortBy)
 			return BlueprintCompare < 0;
 		});
 	}
-	else if (SortBy == TEXT("Type"))
+	else if (SortBy == TEXT("类型"))
 	{
 		FilteredDataItems.Sort([](const TSharedPtr<FProfilerDataItem>& A, const TSharedPtr<FProfilerDataItem>& B)
 		{
@@ -1591,7 +1592,7 @@ void SBlueprintProfilerWidget::SortData(const FString& SortBy)
 			return (int32)A->Type < (int32)B->Type;
 		});
 	}
-	else if (SortBy == TEXT("Category"))
+	else if (SortBy == TEXT("类别"))
 	{
 		FilteredDataItems.Sort([](const TSharedPtr<FProfilerDataItem>& A, const TSharedPtr<FProfilerDataItem>& B)
 		{
@@ -1605,7 +1606,7 @@ void SBlueprintProfilerWidget::SortData(const FString& SortBy)
 			return CategoryCompare < 0;
 		});
 	}
-	else if (SortBy == TEXT("Severity"))
+	else if (SortBy == TEXT("严重程度"))
 	{
 		FilteredDataItems.Sort([](const TSharedPtr<FProfilerDataItem>& A, const TSharedPtr<FProfilerDataItem>& B)
 		{
@@ -1618,7 +1619,7 @@ void SBlueprintProfilerWidget::SortData(const FString& SortBy)
 			return (int32)A->Severity > (int32)B->Severity; // Higher severity first
 		});
 	}
-	else if (SortBy == TEXT("Value"))
+	else if (SortBy == TEXT("值"))
 	{
 		FilteredDataItems.Sort([](const TSharedPtr<FProfilerDataItem>& A, const TSharedPtr<FProfilerDataItem>& B)
 		{
@@ -1631,13 +1632,13 @@ void SBlueprintProfilerWidget::SortData(const FString& SortBy)
 			return A->Value > B->Value; // Higher values first
 		});
 	}
-	else if (SortBy == TEXT("Execution Frequency"))
+	else if (SortBy == TEXT("执行频率"))
 	{
 		// Special sort for runtime data by execution frequency
 		FilteredDataItems.Sort([](const TSharedPtr<FProfilerDataItem>& A, const TSharedPtr<FProfilerDataItem>& B)
 		{
 			if (!A.IsValid() || !B.IsValid()) return false;
-			
+
 			// Prioritize runtime data
 			if (A->Type == EProfilerDataType::Runtime && B->Type != EProfilerDataType::Runtime)
 			{
@@ -1647,17 +1648,17 @@ void SBlueprintProfilerWidget::SortData(const FString& SortBy)
 			{
 				return false;
 			}
-			
+
 			return A->Value > B->Value;
 		});
 	}
-	else if (SortBy == TEXT("Memory Usage"))
+	else if (SortBy == TEXT("内存使用"))
 	{
 		// Special sort for memory data
 		FilteredDataItems.Sort([](const TSharedPtr<FProfilerDataItem>& A, const TSharedPtr<FProfilerDataItem>& B)
 		{
 			if (!A.IsValid() || !B.IsValid()) return false;
-			
+
 			// Prioritize memory data
 			if (A->Type == EProfilerDataType::Memory && B->Type != EProfilerDataType::Memory)
 			{
@@ -1667,7 +1668,7 @@ void SBlueprintProfilerWidget::SortData(const FString& SortBy)
 			{
 				return false;
 			}
-			
+
 			return A->Value > B->Value;
 		});
 	}
@@ -1681,20 +1682,20 @@ void SBlueprintProfilerWidget::FilterData(const FString& FilterBy)
 void SBlueprintProfilerWidget::ClearFilters()
 {
 	CurrentSearchText.Empty();
-	CurrentFilterBy = TEXT("All");
-	
+	CurrentFilterBy = TEXT("全部");
+
 	if (SearchBox.IsValid())
 	{
 		SearchBox->SetText(FText::GetEmpty());
 	}
-	
+
 	if (FilterComboBox.IsValid() && FilterOptions.Num() > 0)
 	{
-		FilterComboBox->SetSelectedItem(FilterOptions[0]); // "All"
+		FilterComboBox->SetSelectedItem(FilterOptions[0]); // "全部"
 	}
-	
+
 	UpdateFilteredData();
-	
+
 	if (DataListView.IsValid())
 	{
 		DataListView->RequestListRefresh();
@@ -1705,25 +1706,25 @@ void SBlueprintProfilerWidget::ApplyQuickFilter(const FString& FilterType)
 {
 	if (FilterType == TEXT("CriticalOnly"))
 	{
-		CurrentFilterBy = TEXT("Critical");
+		CurrentFilterBy = TEXT("严重");
 	}
 	else if (FilterType == TEXT("RuntimeOnly"))
 	{
-		CurrentFilterBy = TEXT("Runtime");
+		CurrentFilterBy = TEXT("运行时");
 	}
 	else if (FilterType == TEXT("LintOnly"))
 	{
-		CurrentFilterBy = TEXT("Lint");
+		CurrentFilterBy = TEXT("代码检查");
 	}
 	else if (FilterType == TEXT("MemoryOnly"))
 	{
-		CurrentFilterBy = TEXT("Memory");
+		CurrentFilterBy = TEXT("内存");
 	}
 	else
 	{
-		CurrentFilterBy = TEXT("All");
+		CurrentFilterBy = TEXT("全部");
 	}
-	
+
 	// Update combo box selection
 	if (FilterComboBox.IsValid())
 	{
@@ -1736,9 +1737,9 @@ void SBlueprintProfilerWidget::ApplyQuickFilter(const FString& FilterType)
 			}
 		}
 	}
-	
+
 	UpdateFilteredData();
-	
+
 	if (DataListView.IsValid())
 	{
 		DataListView->RequestListRefresh();
@@ -1793,91 +1794,92 @@ bool SBlueprintProfilerWidget::MatchesSearchCriteria(TSharedPtr<FProfilerDataIte
 TSharedPtr<FProfilerDataItem> SBlueprintProfilerWidget::CreateDataItemFromRuntimeData(const FNodeExecutionData& Data)
 {
 	TSharedPtr<FProfilerDataItem> Item = MakeShared<FProfilerDataItem>();
-	
+
 	Item->Type = EProfilerDataType::Runtime;
-	Item->Name = Data.NodeName.IsEmpty() ? TEXT("Unknown Node") : Data.NodeName;
-	Item->BlueprintName = Data.BlueprintName.IsEmpty() ? TEXT("Unknown Blueprint") : Data.BlueprintName;
+	Item->Name = Data.NodeName.IsEmpty() ? TEXT("未知节点") : Data.NodeName;
+	Item->BlueprintName = Data.BlueprintName.IsEmpty() ? TEXT("未知蓝图") : Data.BlueprintName;
 	Item->Value = Data.AverageExecutionsPerSecond;
 	Item->TargetObject = Data.BlueprintObject;
-	
-	// Categorize based on execution characteristics
+	Item->NodeGuid = Data.NodeGuid; // 重要：设置NodeGuid以支持双击跳转
+
+	// Categorize based on execution characteristics (使用中文类别)
 	if (Data.AverageExecutionsPerSecond > 1000.0f)
 	{
-		Item->Category = TEXT("Hot Execution");
+		Item->Category = TEXT("高频执行");
 		Item->Severity = ESeverity::Critical;
 	}
 	else if (Data.AverageExecutionsPerSecond > 500.0f)
 	{
-		Item->Category = TEXT("High Execution");
+		Item->Category = TEXT("高执行");
 		Item->Severity = ESeverity::High;
 	}
 	else if (Data.AverageExecutionsPerSecond > 100.0f)
 	{
-		Item->Category = TEXT("Medium Execution");
+		Item->Category = TEXT("中等执行");
 		Item->Severity = ESeverity::Medium;
 	}
 	else if (Data.AverageExecutionsPerSecond > 0.0f)
 	{
-		Item->Category = TEXT("Normal Execution");
+		Item->Category = TEXT("正常执行");
 		Item->Severity = ESeverity::Low;
 	}
 	else
 	{
-		Item->Category = TEXT("No Execution");
+		Item->Category = TEXT("无执行");
 		Item->Severity = ESeverity::Low;
 	}
-	
+
 	// Special handling for Tick nodes
 	if (Item->Name.Contains(TEXT("Tick")) || Item->Name.Contains(TEXT("Event Tick")))
 	{
-		Item->Category = TEXT("Tick Execution");
+		Item->Category = TEXT("Tick执行");
 		// Tick nodes are more critical at lower thresholds
 		if (Data.AverageExecutionsPerSecond > 60.0f) // More than 60 FPS
 		{
 			Item->Severity = ESeverity::High;
 		}
 	}
-	
+
 	return Item;
 }
 
 TSharedPtr<FProfilerDataItem> SBlueprintProfilerWidget::CreateDataItemFromLintIssue(const FLintIssue& Issue)
 {
 	TSharedPtr<FProfilerDataItem> Item = MakeShared<FProfilerDataItem>();
-	
+
 	Item->Type = EProfilerDataType::Lint;
-	Item->Name = Issue.NodeName.IsEmpty() ? TEXT("Unknown Node") : Issue.NodeName;
+	Item->Name = Issue.NodeName.IsEmpty() ? TEXT("未知节点") : Issue.NodeName;
 	Item->BlueprintName = FPaths::GetBaseFilename(Issue.BlueprintPath);
 	Item->Severity = Issue.Severity;
 	Item->NodeGuid = Issue.NodeGuid;
 	Item->Value = 1.0f; // Lint issues are binary
-	
-	// Set detailed category and description based on issue type
+
+	// Set detailed category and description based on issue type (使用中文类别)
 	switch (Issue.Type)
 	{
 		case ELintIssueType::DeadNode:
-			Item->Category = TEXT("Dead Code");
+			Item->Category = TEXT("死代码");
 			break;
 		case ELintIssueType::OrphanNode:
-			Item->Category = TEXT("Orphaned Node");
+			Item->Category = TEXT("孤立节点");
 			break;
 		case ELintIssueType::CastAbuse:
-			Item->Category = TEXT("Performance Cast");
+			Item->Category = TEXT("性能转换");
 			break;
 		case ELintIssueType::TickAbuse:
-			Item->Category = TEXT("Tick Complexity");
+			Item->Category = TEXT("Tick复杂度");
 			break;
 		default:
-			Item->Category = TEXT("Code Quality");
+			Item->Category = TEXT("代码质量");
 			break;
 	}
-	
+
 	// Enhance name with issue description if available
 	if (!Issue.Description.IsEmpty())
 	{
 		Item->Name = FString::Printf(TEXT("%s (%s)"), *Item->Name, *Issue.Description);
 	}
-	
+
 	return Item;
 }
 
@@ -1886,31 +1888,31 @@ TSharedPtr<FProfilerDataItem> SBlueprintProfilerWidget::CreateDataItemFromMemory
 	UBlueprint* Blueprint)
 {
 	TSharedPtr<FProfilerDataItem> Item = MakeShared<FProfilerDataItem>();
-	
+
 	Item->Type = EProfilerDataType::Memory;
-	Item->Name = Blueprint ? Blueprint->GetName() : TEXT("Unknown Blueprint");
+	Item->Name = Blueprint ? Blueprint->GetName() : TEXT("未知蓝图");
 	Item->BlueprintName = Item->Name;
 	Item->Value = Data.InclusiveSize;
 	Item->TargetObject = Blueprint;
-	
-	// Categorize based on memory characteristics
+
+	// Categorize based on memory characteristics (使用中文类别)
 	if (Data.LargeReferences.Num() > 0)
 	{
-		Item->Category = TEXT("Large References");
+		Item->Category = TEXT("大型引用");
 	}
 	else if (Data.ReferenceDepth > 10)
 	{
-		Item->Category = TEXT("Deep References");
+		Item->Category = TEXT("深层引用");
 	}
 	else if (Data.TotalReferences > 100)
 	{
-		Item->Category = TEXT("Many References");
+		Item->Category = TEXT("多重引用");
 	}
 	else
 	{
-		Item->Category = TEXT("Memory Usage");
+		Item->Category = TEXT("内存使用");
 	}
-	
+
 	// Determine severity based on memory size and reference complexity
 	float SeverityScore = Data.InclusiveSize;
 	if (Data.ReferenceDepth > 5)
@@ -1921,7 +1923,7 @@ TSharedPtr<FProfilerDataItem> SBlueprintProfilerWidget::CreateDataItemFromMemory
 	{
 		SeverityScore *= 2.0f; // Penalty for large references
 	}
-	
+
 	if (SeverityScore > 100.0f) // > 100MB equivalent
 	{
 		Item->Severity = ESeverity::Critical;
@@ -1938,11 +1940,11 @@ TSharedPtr<FProfilerDataItem> SBlueprintProfilerWidget::CreateDataItemFromMemory
 	{
 		Item->Severity = ESeverity::Low;
 	}
-	
+
 	// Enhance name with memory info
-	Item->Name = FString::Printf(TEXT("%s (%.1f MB, %d refs)"), 
+	Item->Name = FString::Printf(TEXT("%s (%.1f MB, %d refs)"),
 		*Item->Name, Data.InclusiveSize, Data.TotalReferences);
-	
+
 	return Item;
 }
 
@@ -1968,14 +1970,14 @@ FText SBlueprintProfilerWidget::GetSeverityText(ESeverity Severity) const
 	switch (Severity)
 	{
 		case ESeverity::Critical:
-			return LOCTEXT("SeverityCritical", "Critical");
+			return LOCTEXT("SeverityCritical", "严重");
 		case ESeverity::High:
-			return LOCTEXT("SeverityHigh", "High");
+			return LOCTEXT("SeverityHigh", "高");
 		case ESeverity::Medium:
-			return LOCTEXT("SeverityMedium", "Medium");
+			return LOCTEXT("SeverityMedium", "中");
 		case ESeverity::Low:
 		default:
-			return LOCTEXT("SeverityLow", "Low");
+			return LOCTEXT("SeverityLow", "低");
 	}
 }
 
@@ -1984,13 +1986,13 @@ FText SBlueprintProfilerWidget::GetDataTypeText(EProfilerDataType Type) const
 	switch (Type)
 	{
 		case EProfilerDataType::Runtime:
-			return LOCTEXT("TypeRuntime", "Runtime");
+			return LOCTEXT("TypeRuntime", "运行时");
 		case EProfilerDataType::Lint:
-			return LOCTEXT("TypeLint", "Lint");
+			return LOCTEXT("TypeLint", "代码检查");
 		case EProfilerDataType::Memory:
-			return LOCTEXT("TypeMemory", "Memory");
+			return LOCTEXT("TypeMemory", "内存");
 		default:
-			return LOCTEXT("TypeUnknown", "Unknown");
+			return LOCTEXT("TypeUnknown", "未知");
 	}
 }
 
@@ -2014,11 +2016,11 @@ FText SBlueprintProfilerWidget::GetDataTypeAbbreviation(EProfilerDataType Type) 
 	switch (Type)
 	{
 		case EProfilerDataType::Runtime:
-			return LOCTEXT("TypeAbbrevRuntime", "RT");
+			return LOCTEXT("TypeAbbrevRuntime", "运");
 		case EProfilerDataType::Lint:
-			return LOCTEXT("TypeAbbrevLint", "LT");
+			return LOCTEXT("TypeAbbrevLint", "查");
 		case EProfilerDataType::Memory:
-			return LOCTEXT("TypeAbbrevMemory", "MEM");
+			return LOCTEXT("TypeAbbrevMemory", "存");
 		default:
 			return LOCTEXT("TypeAbbrevUnknown", "?");
 	}
@@ -2026,19 +2028,22 @@ FText SBlueprintProfilerWidget::GetDataTypeAbbreviation(EProfilerDataType Type) 
 
 FLinearColor SBlueprintProfilerWidget::GetCategoryColor(const FString& Category) const
 {
-	if (Category.Contains(TEXT("Execution")))
+	if (Category.Contains(TEXT("执行")) || Category.Contains(TEXT("Execution")))
 	{
 		return FLinearColor(0.2f, 0.8f, 0.2f); // Green
 	}
-	else if (Category.Contains(TEXT("Dead")) || Category.Contains(TEXT("Orphan")))
+	else if (Category.Contains(TEXT("死")) || Category.Contains(TEXT("孤立节点")) ||
+			 Category.Contains(TEXT("Dead")) || Category.Contains(TEXT("Orphan")))
 	{
 		return FLinearColor(0.8f, 0.2f, 0.2f); // Red
 	}
-	else if (Category.Contains(TEXT("Cast")) || Category.Contains(TEXT("Tick")))
+	else if (Category.Contains(TEXT("转换")) || Category.Contains(TEXT("Tick")) ||
+			 Category.Contains(TEXT("Cast")) || Category.Contains(TEXT("复杂度")))
 	{
 		return FLinearColor(0.8f, 0.6f, 0.2f); // Orange
 	}
-	else if (Category.Contains(TEXT("Memory")))
+	else if (Category.Contains(TEXT("引用")) || Category.Contains(TEXT("内存")) ||
+			 Category.Contains(TEXT("Memory")) || Category.Contains(TEXT("References")))
 	{
 		return FLinearColor(0.6f, 0.2f, 0.8f); // Purple
 	}
@@ -2061,12 +2066,12 @@ FText SBlueprintProfilerWidget::GetFormattedValue(TSharedPtr<FProfilerDataItem> 
 			// Format execution frequency
 			if (Item->Value >= 1000.0f)
 			{
-				return FText::Format(LOCTEXT("ValueExecPerSecK", "{0}K/s"),
+				return FText::Format(LOCTEXT("ValueExecPerSecK", "{0}千次/秒"),
 					FText::AsNumber(static_cast<int64>(FMath::RoundToFloat(Item->Value / 1000.0f))));
 			}
 			else
 			{
-				return FText::Format(LOCTEXT("ValueExecPerSec", "{0}/s"),
+				return FText::Format(LOCTEXT("ValueExecPerSec", "{0}次/秒"),
 					FText::AsNumber(static_cast<int64>(FMath::RoundToFloat(Item->Value))));
 			}
 			
@@ -2156,104 +2161,62 @@ void SBlueprintProfilerWidget::JumpToNode(TSharedPtr<FProfilerDataItem> Item)
 	{
 		return;
 	}
-	
-	UObject* ObjectToFocus = nullptr;
-	UBlueprint* BlueprintToOpen = nullptr;
-	
-	// Case 1: TargetObject is valid
-	if (Item->TargetObject.IsValid())
+
+	// 1. 获取蓝图对象
+	UBlueprint* BP = nullptr;
+	if (UObject* Obj = Item->TargetObject.Get())
 	{
-		ObjectToFocus = Item->TargetObject.Get();
-		if (UBlueprint* BP = Cast<UBlueprint>(ObjectToFocus))
+		// 如果 TargetObject 是 Node，获取它所属的蓝图
+		if (UEdGraphNode* Node = Cast<UEdGraphNode>(Obj))
 		{
-			BlueprintToOpen = BP;
-			ObjectToFocus = nullptr; // Focus on BP itself, or use NodeGuid if available
+			BP = Node->GetTypedOuter<UBlueprint>();
+		}
+		else
+		{
+			BP = Cast<UBlueprint>(Obj);
 		}
 	}
-	
-	// Case 2: We have a Blueprint path (if TargetObject is invalid but we have a path)
-	// For now we rely on TargetObject being valid as it's set during creation
-	
-	if (BlueprintToOpen)
-	{
-		// Open the blueprint editor
-		if (GEditor)
-		{
-			GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(BlueprintToOpen);
-		}
-		
-		// If we have a Node GUID, try to find and focus the node
-		if (Item->NodeGuid.IsValid())
-		{
-			// Find node by GUID in the blueprint's graphs
-			UEdGraphNode* TargetNode = nullptr;
-			
-			// Check ubergraphs
-			for (UEdGraph* Graph : BlueprintToOpen->UbergraphPages)
-			{
-				for (UEdGraphNode* Node : Graph->Nodes)
-				{
-					if (Node->NodeGuid == Item->NodeGuid)
-					{
-						TargetNode = Node;
-						break;
-					}
-				}
-				if (TargetNode) break;
-			}
-			
-			// Check function graphs if not found
-			if (!TargetNode)
-			{
-				for (UEdGraph* Graph : BlueprintToOpen->FunctionGraphs)
-				{
-					for (UEdGraphNode* Node : Graph->Nodes)
-					{
-						if (Node->NodeGuid == Item->NodeGuid)
-						{
-							TargetNode = Node;
-							break;
-						}
-					}
-					if (TargetNode) break;
-				}
-			}
-			
-			if (TargetNode)
-			{
-				// In UE 5.6+, use the asset editor subsystem to focus on the node
-				if (GEditor)
-				{
-					UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
-					if (AssetEditorSubsystem && BlueprintToOpen)
-					{
-						// The blueprint is already open, now we need to find a way to jump to the node
-						// For now, just ensure the editor is focused
-						AssetEditorSubsystem->OpenEditorForAsset(BlueprintToOpen);
-					}
-				}
-			}
-		}
-	}
-	else if (ObjectToFocus)
-	{
-		// In UE 5.6+, use the asset editor subsystem to focus on the object
-		if (GEditor)
-		{
-			UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
-			if (AssetEditorSubsystem)
-			{
-				AssetEditorSubsystem->OpenEditorForAsset(ObjectToFocus);
-			}
-		}
-	}
-	else
+
+	if (!BP)
 	{
 		if (StatusText.IsValid())
 		{
 			StatusText->SetText(FText::Format(
-				LOCTEXT("StatusJumpFailed", "Could not find target for '{0}'"),
+				LOCTEXT("StatusJumpFailed", "无法找到 '{0}' 的蓝图"),
 				FText::FromString(Item->Name)
+			));
+		}
+		return;
+	}
+
+	// 2. 查找目标节点（使用引擎内置工具，递归搜索所有图）
+	UEdGraphNode* TargetNode = nullptr;
+	if (Item->NodeGuid.IsValid())
+	{
+		// FBlueprintEditorUtils::GetNodeByGUID 会搜索 EventGraph, Functions, Macros 等所有图
+		TargetNode = FBlueprintEditorUtils::GetNodeByGUID(BP, Item->NodeGuid);
+	}
+
+	// 3. 执行跳转
+	if (TargetNode)
+	{
+		// 使用蓝图专用 API 跳转到节点
+		// 这个 API 会自动打开蓝图编辑器，定位到正确的图表，并聚焦节点
+		FKismetEditorUtilities::BringKismetToFocusAttentionOnObject(TargetNode);
+	}
+	else
+	{
+		// 如果没找到具体节点，至少把蓝图打开
+		if (GEditor)
+		{
+			GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(BP);
+		}
+
+		if (StatusText.IsValid())
+		{
+			StatusText->SetText(FText::Format(
+				LOCTEXT("StatusNodeNotFound", "已打开蓝图 '{0}'，但未找到目标节点"),
+				FText::FromString(BP->GetName())
 			));
 		}
 	}
@@ -2321,12 +2284,12 @@ FText SBlueprintProfilerWidget::GetRecordingStateText() const
 	switch (CurrentRecordingState)
 	{
 		case ERecordingState::Recording:
-			return LOCTEXT("RecordingStateRecording", "RECORDING");
+			return LOCTEXT("RecordingStateRecording", "录制中");
 		case ERecordingState::Paused:
-			return LOCTEXT("RecordingStatePaused", "PAUSED");
+			return LOCTEXT("RecordingStatePaused", "已暂停");
 		case ERecordingState::Stopped:
 		default:
-			return LOCTEXT("RecordingStateStopped", "STOPPED");
+			return LOCTEXT("RecordingStateStopped", "已停止");
 	}
 }
 
@@ -2348,14 +2311,14 @@ FText SBlueprintProfilerWidget::GetSessionInfoText() const
 {
 	if (!RuntimeProfiler.IsValid())
 	{
-		return LOCTEXT("NoSessionInfo", "No session");
+		return LOCTEXT("NoSessionInfo", "无会话");
 	}
 	
 	FRecordingSession Session = RuntimeProfiler->GetCurrentSession();
 	
 	if (Session.SessionName.IsEmpty())
 	{
-		return LOCTEXT("NoActiveSession", "No active session");
+		return LOCTEXT("NoActiveSession", "无活动会话");
 	}
 	
 	if (CurrentRecordingState == ERecordingState::Recording)
@@ -2371,14 +2334,14 @@ FText SBlueprintProfilerWidget::GetSessionInfoText() const
 	else if (CurrentRecordingState == ERecordingState::Paused)
 	{
 		return FText::Format(
-			LOCTEXT("PausedSessionInfo", "{0} - PAUSED"),
+			LOCTEXT("PausedSessionInfo", "{0} - 已暂停"),
 			FText::FromString(Session.SessionName)
 		);
 	}
 	else
 	{
 		return FText::Format(
-			LOCTEXT("StoppedSessionInfo", "{0} - Duration: {1}s"),
+			LOCTEXT("StoppedSessionInfo", "{0} - 时长：{1}秒"),
 			FText::FromString(Session.SessionName),
 			FText::AsNumber(static_cast<int64>(FMath::RoundToFloat(Session.Duration)))
 		);
@@ -2406,7 +2369,7 @@ void SBlueprintProfilerWidget::OnStaticScanComplete(const TArray<FLintIssue>& Is
 		if (Progress.bWasCancelled)
 		{
 			StatusMessage = FText::Format(
-				LOCTEXT("StatusScanCancelled", "Scan cancelled - {0} issues found in {1}/{2} assets"),
+				LOCTEXT("StatusScanCancelled", "扫描已取消 - 在 {2} 个资源中的 {1} 个发现 {0} 个问题"),
 				FText::AsNumber(Issues.Num()),
 				FText::AsNumber(Progress.ProcessedAssets),
 				FText::AsNumber(Progress.TotalAssets)
@@ -2415,7 +2378,7 @@ void SBlueprintProfilerWidget::OnStaticScanComplete(const TArray<FLintIssue>& Is
 		else
 		{
 			StatusMessage = FText::Format(
-				LOCTEXT("StatusScanComplete", "Scan complete - {0} issues found in {1} assets"),
+				LOCTEXT("StatusScanComplete", "扫描完成 - 在 {1} 个资源中发现 {0} 个问题"),
 				FText::AsNumber(Issues.Num()),
 				FText::AsNumber(Progress.TotalAssets)
 			);
@@ -2468,7 +2431,7 @@ void SBlueprintProfilerWidget::UpdateProgressDisplay()
 	if (StatusText.IsValid())
 	{
 		StatusText->SetText(FText::Format(
-			LOCTEXT("StatusScanProgress", "Scanning... {0}"),
+			LOCTEXT("StatusScanProgress", "正在扫描... {0}"),
 			FText::FromString(Progress.CurrentAsset)
 		));
 	}
@@ -2494,7 +2457,7 @@ FText SBlueprintProfilerWidget::GetProgressText() const
 	FScanProgress Progress = StaticLinter->GetScanProgress();
 	
 	return FText::Format(
-		LOCTEXT("ProgressDetails", "{0}/{1} assets processed ({2}%) - {3} issues found"),
+		LOCTEXT("ProgressDetails", "已处理 {0}/{1} 个资源（{2}%）- 发现 {3} 个问题"),
 		FText::AsNumber(Progress.ProcessedAssets),
 		FText::AsNumber(Progress.TotalAssets),
 		FText::AsNumber(static_cast<int64>(FMath::RoundToFloat(Progress.ProgressPercentage * 100.0f))),
@@ -2513,7 +2476,7 @@ FText SBlueprintProfilerWidget::GetTimeRemainingText() const
 	
 	if (Progress.EstimatedTimeRemaining <= 0.0f || Progress.ProcessedAssets == 0)
 	{
-		return LOCTEXT("TimeRemainingCalculating", "Calculating time remaining...");
+		return LOCTEXT("TimeRemainingCalculating", "正在计算剩余时间...");
 	}
 	
 	// Format time remaining in a human-readable way
@@ -2524,7 +2487,7 @@ FText SBlueprintProfilerWidget::GetTimeRemainingText() const
 	if (Minutes > 0)
 	{
 		return FText::Format(
-			LOCTEXT("TimeRemainingMinutes", "Estimated time remaining: {0}m {1}s"),
+			LOCTEXT("TimeRemainingMinutes", "预计剩余时间：{0}分 {1}秒"),
 			FText::AsNumber(Minutes),
 			FText::AsNumber(Seconds)
 		);
@@ -2532,7 +2495,7 @@ FText SBlueprintProfilerWidget::GetTimeRemainingText() const
 	else
 	{
 		return FText::Format(
-			LOCTEXT("TimeRemainingSeconds", "Estimated time remaining: {0}s"),
+			LOCTEXT("TimeRemainingSeconds", "预计剩余时间：{0}秒"),
 			FText::AsNumber(Seconds)
 		);
 	}
