@@ -1562,6 +1562,13 @@ void FRuntimeProfiler::OnScriptExceptionTrace(const UObject* ActiveObject, const
 		return;
 	}
 
+	// FILTER: Skip engine internal macro nodes (StandardMacros, etc.)
+	// This prevents recording internal nodes from For Loop, While Loop, etc.
+	if (bHideEngineInternalNodes && IsNodeInStandardMacros(Node))
+	{
+		return;
+	}
+
 	// Use node as the key for tracking execution
 	TWeakObjectPtr<UObject> NodeKey(Node);
 
@@ -1685,4 +1692,60 @@ void FRuntimeProfiler::ProcessNextTracepointBatch()
 			);
 		}
 	}
+}
+
+//============================================================
+// Filtering Helper Methods
+//============================================================
+
+bool FRuntimeProfiler::IsNodeInStandardMacros(UEdGraphNode* Node) const
+{
+	if (!Node)
+	{
+		return false;
+	}
+
+	// Get the node's path
+	FString NodePath = Node->GetPathName();
+
+	// Check if the node belongs to engine's standard macros
+	// Common paths for engine macros:
+	// - /Engine/Functions/StandardMacros
+	// - /Engine/Transient
+	// - Any path starting with /Engine/
+	if (NodePath.Contains(TEXT("/Engine/Functions/StandardMacros")) ||
+		NodePath.Contains(TEXT("/Engine/Transient")) ||
+		NodePath.StartsWith(TEXT("/Engine/")))
+	{
+		return true;
+	}
+
+	// Also check the graph that contains this node
+	if (UEdGraph* Graph = Node->GetGraph())
+	{
+		FString GraphPath = Graph->GetPathName();
+		if (GraphPath.Contains(TEXT("/Engine/Functions/StandardMacros")) ||
+			GraphPath.StartsWith(TEXT("/Engine/")))
+		{
+			return true;
+		}
+	}
+
+	// Check if the blueprint is an engine internal asset
+	if (UBlueprint* BP = Cast<UBlueprint>(Node->GetOuter()))
+	{
+		if (IsEngineInternalBlueprint(BP->GetPathName()))
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool FRuntimeProfiler::IsEngineInternalBlueprint(const FString& BlueprintPath) const
+{
+	// Check if the blueprint is in the engine directory
+	return BlueprintPath.StartsWith(TEXT("/Engine/")) ||
+		   BlueprintPath.StartsWith(TEXT("/Script/"));
 }

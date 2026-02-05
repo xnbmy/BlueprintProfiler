@@ -614,6 +614,38 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 									return FReply::Handled();
 								})
 							]
+
+							// Separator
+							+ SHorizontalBox::Slot()
+							.AutoWidth()
+							.Padding(8, 0, 8, 0)
+							[
+								SNew(SBox)
+								.WidthOverride(1)
+								[
+									SNew(SBorder)
+									.BorderImage(FAppStyle::GetBrush("WhiteBrush"))
+									.BorderBackgroundColor(FLinearColor(0.2f, 0.2f, 0.2f, 0.5f))
+								]
+							]
+
+							// Hide Engine Internal Nodes checkbox
+							+ SHorizontalBox::Slot()
+							.AutoWidth()
+							.Padding(4, 0, 0, 0)
+							.VAlign(VAlign_Center)
+							[
+								SNew(SCheckBox)
+								.IsChecked(ECheckBoxState::Checked)
+								.Style(FAppStyle::Get(), "Widget.CheckBox")
+								.OnCheckStateChanged(this, &SBlueprintProfilerWidget::OnHideEngineNodesChanged)
+								[
+									SNew(STextBlock)
+									.Text(LOCTEXT("HideEngineNodes", "隐藏引擎内部节点"))
+									.ToolTipText(LOCTEXT("HideEngineNodesTooltip", "过滤掉引擎内置宏节点（如For Loop、While Loop等）的内部实现，只显示你自己的业务逻辑"))
+									.Font(FAppStyle::Get().GetFontStyle("CheckBox.Font"))
+								]
+							]
 						]
 					]
 					
@@ -1462,13 +1494,31 @@ void SBlueprintProfilerWidget::OnFilterSelectionChanged(
 	{
 		CurrentFilterBy = *Selection;
 		UpdateFilteredData();
-		
+
 		if (DataListView.IsValid())
 		{
 			DataListView->RequestListRefresh();
 		}
 	}
 }
+
+void SBlueprintProfilerWidget::OnHideEngineNodesChanged(ECheckBoxState NewState)
+{
+	bool bHide = (NewState == ECheckBoxState::Checked);
+	RuntimeProfiler->SetHideEngineInternalNodes(bHide);
+
+	// Refresh data to apply filter
+	UpdateFilteredData();
+
+	if (DataListView.IsValid())
+	{
+		DataListView->RequestListRefresh();
+	}
+
+	// Log the change for debugging
+	UE_LOG(LogTemp, Log, TEXT("[Profiler] Hide engine internal nodes: %s"), bHide ? TEXT("Enabled") : TEXT("Disabled"));
+}
+
 // Data processing methods
 void SBlueprintProfilerWidget::UpdateFilteredData()
 {

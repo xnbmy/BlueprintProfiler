@@ -58,6 +58,7 @@ private:
 	void OnSearchTextChanged(const FText& Text);
 	void OnSortSelectionChanged(TSharedPtr<FString> Selection, ESelectInfo::Type SelectInfo);
 	void OnFilterSelectionChanged(TSharedPtr<FString> Selection, ESelectInfo::Type SelectInfo);
+	void OnHideEngineNodesChanged(ECheckBoxState NewState);
 
 	// Data processing
 	void UpdateFilteredData();

@@ -78,6 +78,10 @@ public:
 	// Check if async setup is in progress
 	bool IsSettingUpTracepoints() const { return bIsSettingUpTracepoints; }
 
+	// Filtering options
+	void SetHideEngineInternalNodes(bool bHide) { bHideEngineInternalNodes = bHide; }
+	bool GetHideEngineInternalNodes() const { return bHideEngineInternalNodes; }
+
 private:
 	// Recording state
 	ERecordingState CurrentState;
@@ -91,6 +95,9 @@ private:
 	bool bAutoStartOnPIE;
 	bool bAutoStopOnPIEEnd;
 	bool bIsInstrumentationEnabled;
+
+	// Filtering options
+	bool bHideEngineInternalNodes = true;  // Default to true for better UX
 
 	// Blueprint instrumentation delegate handle
 	FDelegateHandle InstrumentationDelegateHandle;
@@ -142,6 +149,10 @@ private:
 	// Node analysis methods
 	FString GetDetailedNodeName(UObject* Object) const;
 	FGuid GetNodeGuid(UObject* Object) const;
+
+	// Filtering helper methods
+	bool IsNodeInStandardMacros(UEdGraphNode* Node) const;
+	bool IsEngineInternalBlueprint(const FString& BlueprintPath) const;
 	
 	// Tick complexity analysis methods
 	void AnalyzeTickComplexity(AActor* Actor, FTickAbuseInfo& TickAbuse) const;
