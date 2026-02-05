@@ -114,4 +114,7 @@ private:
 	TSharedPtr<class FAsyncTask<class FScanTask>> CurrentScanTask;
 	bool bTaskComplete;  // Tracks if the async CompleteScan has been called
 	FCriticalSection IssuesLock;
+
+	// Self-reference to keep object alive during async operations
+	TSharedPtr<FStaticLinter> SelfReference;
 };

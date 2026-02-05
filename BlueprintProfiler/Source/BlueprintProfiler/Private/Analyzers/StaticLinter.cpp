@@ -40,6 +40,8 @@ public:
 		TArray<FLintIssue> AllIssues;
 		int32 ProcessedCount = 0;
 
+		UE_LOG(LogTemp, Log, TEXT("FScanTask: Starting to process %d assets"), Assets.Num());
+
 		for (const FAssetData& AssetData : Assets)
 		{
 			// Check if linter is still valid
@@ -47,17 +49,21 @@ public:
 			if (!LinterPin.IsValid())
 			{
 				// Linter was destroyed, abort scan
+				UE_LOG(LogTemp, Warning, TEXT("FScanTask: Linter was destroyed, aborting scan"));
 				return;
 			}
 
 			if (LinterPin->IsCancelRequested())
 			{
+				UE_LOG(LogTemp, Log, TEXT("FScanTask: Scan was cancelled after %d assets"), ProcessedCount);
 				break;
 			}
 
+			// Process this blueprint
 			TArray<FLintIssue> AssetIssues;
 			LinterPin->ProcessBlueprint(AssetData, Config, AssetIssues);
 
+			// Accumulate issues
 			{
 				FScopeLock Lock(&LinterPin->GetIssuesLock());
 				AllIssues.Append(AssetIssues);
@@ -65,8 +71,15 @@ public:
 
 			ProcessedCount++;
 
-			// Update progress on game thread with current asset name
+			// Update progress immediately (synchronously update the data)
+			// Then notify UI on game thread
 			FString CurrentAssetName = AssetData.AssetName.ToString();
+
+			// Log progress for debugging
+			UE_LOG(LogTemp, Log, TEXT("FScanTask: Processed %d/%d - %s (%d issues found)"),
+				ProcessedCount, Assets.Num(), *CurrentAssetName, AssetIssues.Num());
+
+			// Use Async to update UI on game thread
 			AsyncTask(ENamedThreads::GameThread, [this, ProcessedCount, CurrentAssetName]()
 			{
 				TSharedPtr<FStaticLinter> LinterPin = LinterWeak.Pin();
@@ -76,12 +89,15 @@ public:
 				}
 			});
 
-			// Add small delay to prevent overwhelming the system
-			if (Config.bUseMultiThreading && ProcessedCount % 10 == 0)
+			// Small delay every few assets to prevent overwhelming the system
+			if (Config.bUseMultiThreading && ProcessedCount % 5 == 0)
 			{
-				FPlatformProcess::Sleep(0.001f); // 1ms delay every 10 assets
+				FPlatformProcess::Sleep(0.001f); // 1ms delay every 5 assets
 			}
 		}
+
+		UE_LOG(LogTemp, Log, TEXT("FScanTask: Completed processing %d assets, found %d total issues"),
+			ProcessedCount, AllIssues.Num());
 
 		// Complete scan on game thread (async)
 		// The lambda will capture 'this' which keeps the task alive until CompleteScan is called
@@ -280,6 +296,9 @@ void FStaticLinter::StartAsyncScan(const TArray<FAssetData>& Assets, const FScan
 		CurrentScanTask.Reset();
 	}
 
+	// Clear previous self-reference
+	SelfReference.Reset();
+
 	bScanInProgress = true;
 	bCancelRequested = false;
 	bTaskComplete = false; // Task is starting, mark as incomplete
@@ -299,15 +318,16 @@ void FStaticLinter::StartAsyncScan(const TArray<FAssetData>& Assets, const FScan
 
 	if (Config.bUseMultiThreading && Assets.Num() > 1)
 	{
-		// Use async task for multi-threading
-		// Create a TSharedPtr to this object to pass to the task
-		TSharedPtr<FStaticLinter> LinterPtr(this, [](FStaticLinter* /*Linter*/) {
-			// Custom deleter that doesn't actually delete - the object is owned by its parent
-			// This allows us to use TSharedPtr without taking ownership
+		// Create a self-reference to keep this object alive during async operation
+		// The custom deleter ensures we don't actually delete the object (it's owned by the widget)
+		SelfReference = TSharedPtr<FStaticLinter>(this, [](FStaticLinter* /*Linter*/) {
+			// No-op deleter - object is owned by its parent (the widget)
 		});
 
-		CurrentScanTask = MakeShared<FAsyncTask<FScanTask>>(LinterPtr, Assets, Config);
+		CurrentScanTask = MakeShared<FAsyncTask<FScanTask>>(SelfReference, Assets, Config);
 		CurrentScanTask->StartBackgroundTask();
+
+		UE_LOG(LogTemp, Log, TEXT("Async scan task started in background"));
 	}
 	else
 	{
@@ -339,23 +359,13 @@ void FStaticLinter::ProcessBlueprint(const FAssetData& AssetData, const FScanCon
 	// Update current asset being processed
 	CurrentProgress.CurrentAsset = AssetData.AssetName.ToString();
 
-	UE_LOG(LogTemp, Verbose, TEXT("Processing blueprint: %s"), *CurrentProgress.CurrentAsset);
+	UE_LOG(LogTemp, Log, TEXT("Processing blueprint: %s"), *CurrentProgress.CurrentAsset);
 
 	UBlueprint* Blueprint = nullptr;
 
-	// Try to get the blueprint if it's already loaded
-	if (AssetData.IsAssetLoaded())
-	{
-		Blueprint = Cast<UBlueprint>(AssetData.GetAsset());
-	}
-
-	// If not loaded and we're in a background thread, skip it
-	// In a production system, we would queue this for loading on the game thread
-	if (!Blueprint)
-	{
-		UE_LOG(LogTemp, Verbose, TEXT("Skipping unloaded blueprint: %s (load blueprints in editor first for best results)"), *AssetData.GetObjectPathString());
-		return;
-	}
+	// Try to get the blueprint - GetAsset() will synchronously load if not already loaded
+	// This is necessary because blueprints in the editor may not be loaded into memory
+	Blueprint = Cast<UBlueprint>(AssetData.GetAsset());
 
 	if (!Blueprint)
 	{
@@ -377,12 +387,14 @@ void FStaticLinter::ProcessBlueprint(const FAssetData& AssetData, const FScanCon
 		return;
 	}
 
-	UE_LOG(LogTemp, Verbose, TEXT("Processing blueprint: %s (%d graphs)"),
-		*Blueprint->GetName(), Blueprint->UbergraphPages.Num() + Blueprint->FunctionGraphs.Num());
+	UE_LOG(LogTemp, Log, TEXT("Analyzing blueprint: %s (%d uber graphs, %d function graphs)"),
+		*Blueprint->GetName(), Blueprint->UbergraphPages.Num(), Blueprint->FunctionGraphs.Num());
 
 	// Run enabled checks with error handling
 	try
 	{
+		int32 InitialIssueCount = OutIssues.Num();
+
 		if (Config.EnabledChecks.Contains(ELintIssueType::DeadNode))
 		{
 			DetectDeadNodes(Blueprint, OutIssues);
@@ -401,6 +413,12 @@ void FStaticLinter::ProcessBlueprint(const FAssetData& AssetData, const FScanCon
 		if (Config.EnabledChecks.Contains(ELintIssueType::TickAbuse))
 		{
 			DetectTickAbuse(Blueprint, OutIssues);
+		}
+
+		int32 IssuesFound = OutIssues.Num() - InitialIssueCount;
+		if (IssuesFound > 0)
+		{
+			UE_LOG(LogTemp, Log, TEXT("Found %d issues in blueprint: %s"), IssuesFound, *Blueprint->GetName());
 		}
 	}
 	catch (...)
@@ -1190,6 +1208,10 @@ void FStaticLinter::CompleteScan(const TArray<FLintIssue>& AllIssues)
 	UE_LOG(LogTemp, Log, TEXT("Scan completed: %d issues found in %d assets (%.2fs total, %.3fs per asset)"),
 		Issues.Num(), CurrentProgress.TotalAssets, TotalSeconds,
 		CurrentProgress.TotalAssets > 0 ? TotalSeconds / CurrentProgress.TotalAssets : 0.0);
+
+	// Clear self-reference now that scan is complete
+	// This is safe because CompleteScan is called on the game thread after DoWork finishes
+	SelfReference.Reset();
 }
 
 TArray<UEdGraph*> FStaticLinter::GetAllGraphs(UBlueprint* Blueprint) const
