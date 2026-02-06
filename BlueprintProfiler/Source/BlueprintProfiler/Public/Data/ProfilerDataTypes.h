@@ -33,10 +33,11 @@ enum class EProfilerDataType : uint8
 UENUM(BlueprintType)
 enum class ELintIssueType : uint8
 {
-	DeadNode = 0,      // 无效节点
-	OrphanNode = 1,    // 孤岛节点
-	CastAbuse = 2,     // Cast滥用
-	TickAbuse = 3      // Tick滥用
+	DeadNode = 0,         // 无效节点
+	OrphanNode = 1,       // 孤岛节点
+	CastAbuse = 2,        // Cast滥用
+	TickAbuse = 3,        // Tick滥用
+	UnusedFunction = 4    // 未引用的函数
 };
 
 /**

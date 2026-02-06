@@ -2000,6 +2000,9 @@ TSharedPtr<FProfilerDataItem> SBlueprintProfilerWidget::CreateDataItemFromLintIs
 		case ELintIssueType::TickAbuse:
 			Item->Category = TEXT("Tick复杂度");
 			break;
+		case ELintIssueType::UnusedFunction:
+			Item->Category = TEXT("未引用函数");
+			break;
 		default:
 			Item->Category = TEXT("代码质量");
 			break;

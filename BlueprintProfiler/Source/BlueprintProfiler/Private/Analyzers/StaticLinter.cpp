@@ -424,6 +424,11 @@ void FStaticLinter::ProcessBlueprint(const FAssetData& AssetData, const FScanCon
 			DetectTickAbuse(Blueprint, OutIssues);
 		}
 
+		if (Config.EnabledChecks.Contains(ELintIssueType::UnusedFunction))
+		{
+			DetectUnusedFunctions(Blueprint, OutIssues);
+		}
+
 		int32 IssuesFound = OutIssues.Num() - InitialIssueCount;
 		if (IssuesFound > 0)
 		{
@@ -1277,7 +1282,7 @@ void FStaticLinter::CompleteScan(const TArray<FLintIssue>& AllIssues)
 TArray<UEdGraph*> FStaticLinter::GetAllGraphs(UBlueprint* Blueprint) const
 {
 	TArray<UEdGraph*> AllGraphs;
-	
+
 	if (!Blueprint)
 	{
 		return AllGraphs;
@@ -1311,4 +1316,281 @@ TArray<UEdGraph*> FStaticLinter::GetAllGraphs(UBlueprint* Blueprint) const
 	}
 
 	return AllGraphs;
+}
+
+void FStaticLinter::DetectUnusedFunctions(UBlueprint* Blueprint, TArray<FLintIssue>& OutIssues)
+{
+	if (!Blueprint)
+	{
+		return;
+	}
+
+	// 0. 首先跳过接口 Blueprint（BPI_ 开头）
+	//    接口中的函数不需要被调用，它们是被其他 Blueprint 实现的
+	FString BlueprintName = Blueprint->GetName();
+	if (BlueprintName.StartsWith(TEXT("BPI_")))
+	{
+		// 这是接口 Blueprint，不检测未引用函数
+		return;
+	}
+
+	// 获取项目中所有 Blueprint 来检测函数调用
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+
+	if (!AssetRegistry.IsLoadingAssets())
+	{
+		AssetRegistry.SearchAllAssets(true);
+	}
+
+	TArray<FAssetData> AllBlueprintAssets;
+	FARFilter Filter;
+	Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
+	Filter.bRecursivePaths = true;
+	Filter.PackagePaths.Add(FName(TEXT("/Game")));
+	AssetRegistry.GetAssets(Filter, AllBlueprintAssets);
+
+	// 收集所有被调用的函数名
+	TSet<FName> ReferencedFunctions;
+	TMap<FName, int32> FunctionCallCount; // 函数名 -> 调用次数
+	// 同时收集函数图的 FName，因为函数图的名称格式可能与函数引用不同
+	TSet<FName> FunctionGraphNames;  // 用于存储函数图的名称
+
+	for (const FAssetData& AssetData : AllBlueprintAssets)
+	{
+		UBlueprint* BP = Cast<UBlueprint>(AssetData.GetAsset());
+		if (!BP)
+		{
+			continue;
+		}
+
+		// 首先收集所有函数图的名称
+		for (UEdGraph* FuncGraph : BP->FunctionGraphs)
+		{
+			if (FuncGraph)
+			{
+				FunctionGraphNames.Add(FuncGraph->GetFName());
+			}
+		}
+
+		TArray<UEdGraph*> AllGraphs = GetAllGraphs(BP);
+		for (UEdGraph* Graph : AllGraphs)
+		{
+			if (!Graph)
+			{
+				continue;
+			}
+
+			for (UEdGraphNode* Node : Graph->Nodes)
+			{
+				if (UK2Node_CallFunction* CallFuncNode = Cast<UK2Node_CallFunction>(Node))
+				{
+					FName FunctionName = CallFuncNode->FunctionReference.GetMemberName();
+					if (FunctionName != NAME_None)
+					{
+						ReferencedFunctions.Add(FunctionName);
+						FunctionCallCount.FindOrAdd(FunctionName)++;
+					}
+				}
+			}
+		}
+	}
+
+	// 检查当前 Blueprint 的函数是否被引用
+	for (UEdGraph* FunctionGraph : Blueprint->FunctionGraphs)
+	{
+		if (!FunctionGraph)
+		{
+			continue;
+		}
+
+		FName FunctionName = FunctionGraph->GetFName();
+		FString FunctionNameStr = FunctionName.ToString();
+
+		// ========== 跳过系统自带函数和接口函数的判断标准 ==========
+
+		// 1. 以 "Receive" 开头（事件）
+		if (FunctionNameStr.StartsWith(TEXT("Receive")))
+		{
+			continue;
+		}
+
+		// 2. 常见的引擎接口函数命名模式
+		//    这些函数通常来自接口，不应该被报告为未引用
+		TArray<FString> InterfaceFunctionPatterns = {
+			TEXT("GetPlayerState"),
+			TEXT("GetController"),
+			TEXT("GetPawn"),
+			TEXT("GetCharacter"),
+			TEXT("GetOwner"),
+			TEXT("GetGameInstance"),
+			TEXT("GetWorld"),
+			TEXT("GetLevel"),
+			TEXT("GetParent"),
+			TEXT("IsA"),
+			TEXT("IsValid"),
+			TEXT("K2_"),           // K2_ 开头的函数通常是引擎生成的
+			TEXT("Execute"),       // Execute 相关函数
+			TEXT("Ubergraph"),     // Ubergraph 相关函数
+			TEXT("UserConstructionScript"),
+			TEXT("ConstructionScript"),
+			// 常见接口前缀
+			TEXT("HasAuthority"),   // INetworkInterface
+			TEXT("GetNetConnection"),
+			TEXT("GetNetMode"),
+			TEXT("IsNetMode"),
+		};
+
+		bool bIsEnginePattern = false;
+		for (const FString& Pattern : InterfaceFunctionPatterns)
+		{
+			if (FunctionNameStr.Contains(Pattern))
+			{
+				bIsEnginePattern = true;
+				break;
+			}
+		}
+		if (bIsEnginePattern)
+		{
+			continue;
+		}
+
+		// 3. 检查是否是 Override 函数（覆盖父类虚函数）
+		bool bIsOverrideFunction = false;
+		if (Blueprint->ParentClass)
+		{
+			UFunction* ParentFunction = Blueprint->ParentClass->FindFunctionByName(FunctionName);
+			if (ParentFunction)
+			{
+				bIsOverrideFunction = true;
+			}
+		}
+
+		if (bIsOverrideFunction)
+		{
+			continue;
+		}
+
+		// 4. 跳过来自引擎或第三方插件的 Blueprint
+		FString BlueprintPath = Blueprint->GetPathName();
+		if (BlueprintPath.StartsWith(TEXT("/Engine/")) ||
+			BlueprintPath.StartsWith(TEXT("/Game/")) == false)
+		{
+			continue;
+		}
+
+		// 5. 跳过接口函数（通过检查继承链）
+		{
+			bool bIsInterfaceFunction = false;
+			UClass* CurrentClass = Blueprint->GeneratedClass ? Blueprint->GeneratedClass : Blueprint->ParentClass;
+
+			while (CurrentClass && !bIsInterfaceFunction)
+			{
+				// 检查当前类实现的所有接口
+				for (const FImplementedInterface& Interface : CurrentClass->Interfaces)
+				{
+					if (Interface.Class && Interface.Class->FindFunctionByName(FunctionName))
+					{
+						bIsInterfaceFunction = true;
+						break;
+					}
+				}
+
+				if (bIsInterfaceFunction)
+				{
+					break;
+				}
+
+				// 向上检查父类
+				CurrentClass = CurrentClass->GetSuperClass();
+			}
+
+			if (bIsInterfaceFunction)
+			{
+				continue;
+			}
+		}
+
+		// 6. 检查函数是否被引用（使用函数引用名或函数图名）
+		//    注意：函数引用名和函数图名可能格式不同，所以都要检查
+		bool bIsReferenced = false;
+
+		// 首先检查函数图名是否在已收集的函数图名中（被其他 Blueprint 定义）
+		// 这表示函数被其他 Blueprint 实现
+		if (FunctionGraphNames.Contains(FunctionName))
+		{
+			// 检查是否有其他 Blueprint 调用了这个函数
+			for (const FAssetData& AssetData : AllBlueprintAssets)
+			{
+				UBlueprint* BP = Cast<UBlueprint>(AssetData.GetAsset());
+				if (!BP || BP == Blueprint)
+				{
+					continue;  // 跳过自己
+				}
+
+				// 检查这个 Blueprint 是否引用了当前函数
+				for (UEdGraph* Graph : GetAllGraphs(BP))
+				{
+					if (!Graph)
+					{
+						continue;
+					}
+
+					for (UEdGraphNode* Node : Graph->Nodes)
+					{
+						if (UK2Node_CallFunction* CallFuncNode = Cast<UK2Node_CallFunction>(Node))
+						{
+							FName CalledFunctionName = CallFuncNode->FunctionReference.GetMemberName();
+							// 调试日志：输出函数名比较
+							if (CalledFunctionName == FunctionName)
+							{
+								bIsReferenced = true;
+								break;
+							}
+						}
+					}
+
+					if (bIsReferenced)
+					{
+						break;
+					}
+				}
+
+				if (bIsReferenced)
+				{
+					break;
+				}
+			}
+		}
+
+		// 也检查函数引用名（从 CallFunction 节点收集的）
+		if (!bIsReferenced && ReferencedFunctions.Contains(FunctionName))
+		{
+			bIsReferenced = true;
+		}
+
+		// 调试：输出未引用的函数名
+		if (!bIsReferenced)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("未引用函数: %s (在 Blueprint: %s)"), *FunctionNameStr, *Blueprint->GetName());
+			UE_LOG(LogTemp, Warning, TEXT("  ReferencedFunctions 包含此函数: %d"), ReferencedFunctions.Contains(FunctionName));
+			UE_LOG(LogTemp, Warning, TEXT("  FunctionGraphNames 包含此函数: %d"), FunctionGraphNames.Contains(FunctionName));
+		}
+
+		if (bIsReferenced)
+		{
+			continue;  // 函数被引用，跳过
+		}
+
+		// 函数未被引用，报告问题
+		FLintIssue Issue;
+		Issue.Type = ELintIssueType::UnusedFunction;
+		Issue.BlueprintPath = Blueprint->GetPathName();
+		Issue.NodeName = FunctionNameStr;
+		Issue.Description = FString::Printf(TEXT("函数 '%s' 已定义但从未被调用"), *FunctionNameStr);
+		Issue.Severity = ESeverity::Medium; // 未引用的函数是中等严重度
+		Issue.NodeGuid = FGuid(); // 函数图没有 NodeGuid，留空
+
+		OutIssues.Add(Issue);
+	}
 }

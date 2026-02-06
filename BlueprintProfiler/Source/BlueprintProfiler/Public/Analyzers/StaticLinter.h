@@ -26,6 +26,7 @@ struct BLUEPRINTPROFILER_API FScanConfiguration
 		EnabledChecks.Add(ELintIssueType::OrphanNode);
 		EnabledChecks.Add(ELintIssueType::CastAbuse);
 		EnabledChecks.Add(ELintIssueType::TickAbuse);
+		EnabledChecks.Add(ELintIssueType::UnusedFunction);
 	}
 };
 
@@ -90,6 +91,7 @@ private:
 	void DetectOrphanNodes(UBlueprint* Blueprint, TArray<FLintIssue>& OutIssues);
 	void DetectCastAbuse(UBlueprint* Blueprint, TArray<FLintIssue>& OutIssues);
 	void DetectTickAbuse(UBlueprint* Blueprint, TArray<FLintIssue>& OutIssues);
+	void DetectUnusedFunctions(UBlueprint* Blueprint, TArray<FLintIssue>& OutIssues);
 
 	// Utility methods
 	TArray<FAssetData> GetBlueprintAssets(const TArray<FString>& Paths) const;
