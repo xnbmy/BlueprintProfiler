@@ -11,16 +11,16 @@ FScanTask::FScanTask(TSharedPtr<FStaticLinter> InLinter, const TArray<FAssetData
 
 void FScanTask::DoWork()
 {
-	// Asset loading must happen on game thread, so we dispatch all work there
-	// This method just queues the work and waits for completion
-
+	// Process assets in batches to avoid blocking the game thread for too long
 	TArray<FLintIssue> AllIssues;
 	FThreadSafeCounter ProcessedCount;
+	int32 TotalAssets = Assets.Num();
+	int32 CurrentIndex = 0;
 
-	UE_LOG(LogTemp, Log, TEXT("FScanTask: Starting to process %d assets on game thread"), Assets.Num());
+	UE_LOG(LogTemp, Log, TEXT("FScanTask: Starting to process %d assets with frame splitting"), TotalAssets);
 
-	// Process all assets on game thread (required for blueprint loading)
-	AsyncTask(ENamedThreads::GameThread, [this, &AllIssues, &ProcessedCount]()
+	// Process assets one by one, yielding control back to the game thread between each asset
+	while (CurrentIndex < TotalAssets && !IsCancelRequested())
 	{
 		TSharedPtr<FStaticLinter> LinterPin = LinterWeak.Pin();
 		if (!LinterPin.IsValid())
@@ -29,18 +29,47 @@ void FScanTask::DoWork()
 			return;
 		}
 
-		for (const FAssetData& AssetData : Assets)
+		if (LinterPin->IsCancelRequested())
 		{
-			if (LinterPin->IsCancelRequested())
+			UE_LOG(LogTemp, Log, TEXT("FScanTask: Scan was cancelled after %d assets"), ProcessedCount.GetValue());
+			break;
+		}
+
+		const FAssetData& AssetData = Assets[CurrentIndex];
+
+		// Process this blueprint on the game thread (required for blueprint loading)
+		// But use a synchronous approach within the async task
+		TArray<FLintIssue> AssetIssues;
+		
+		// Execute on game thread but wait for completion
+		FEvent* CompletionEvent = FPlatformProcess::GetSynchEventFromPool(false);
+		bool bProcessed = false;
+		
+		AsyncTask(ENamedThreads::GameThread, [this, &AssetData, &AssetIssues, &LinterPin, &CompletionEvent, &bProcessed]()
+		{
+			if (LinterPin.IsValid())
 			{
-				UE_LOG(LogTemp, Log, TEXT("FScanTask: Scan was cancelled after %d assets"), ProcessedCount.GetValue());
+				LinterPin->ProcessBlueprint(AssetData, Config, AssetIssues);
+				bProcessed = true;
+			}
+			CompletionEvent->Trigger();
+		});
+
+		// Wait for game thread processing with timeout to allow UI updates
+		while (!CompletionEvent->Wait(10)) // 10ms timeout to allow UI thread to process
+		{
+			// Check cancellation during wait
+			TSharedPtr<FStaticLinter> CheckLinter = LinterWeak.Pin();
+			if (!CheckLinter.IsValid() || CheckLinter->IsCancelRequested())
+			{
 				break;
 			}
+		}
+		
+		FPlatformProcess::ReturnSynchEventToPool(CompletionEvent);
 
-			// Process this blueprint
-			TArray<FLintIssue> AssetIssues;
-			LinterPin->ProcessBlueprint(AssetData, Config, AssetIssues);
-
+		if (bProcessed)
+		{
 			// Accumulate issues
 			{
 				FScopeLock Lock(&LinterPin->GetIssuesLock());
@@ -49,28 +78,25 @@ void FScanTask::DoWork()
 
 			int32 CurrentCount = ProcessedCount.Increment();
 
-			// Update progress
-			LinterPin->UpdateScanProgress(CurrentCount, Assets.Num(), AssetData.AssetName.ToString());
+			// Update progress on game thread
+			AsyncTask(ENamedThreads::GameThread, [this, CurrentCount, TotalAssets, AssetData]()
+			{
+				TSharedPtr<FStaticLinter> UpdateLinter = LinterWeak.Pin();
+				if (UpdateLinter.IsValid())
+				{
+					UpdateLinter->UpdateScanProgress(CurrentCount, TotalAssets, AssetData.AssetName.ToString());
+				}
+			});
 
 			// Log progress for debugging
 			UE_LOG(LogTemp, Log, TEXT("FScanTask: Processed %d/%d - %s (%d issues found)"),
-				CurrentCount, Assets.Num(), *AssetData.AssetName.ToString(), AssetIssues.Num());
+				CurrentCount, TotalAssets, *AssetData.AssetName.ToString(), AssetIssues.Num());
 		}
-	});
 
-	// Wait for game thread processing to complete
-	// Since DoWork runs on a thread pool thread, we need to wait for the game thread task
-	while (ProcessedCount.GetValue() < Assets.Num() && !LinterWeak.Pin()->IsCancelRequested())
-	{
-		FPlatformProcess::Sleep(0.01f); // Sleep 10ms
+		CurrentIndex++;
 
-		// Check if linter is still valid
-		TSharedPtr<FStaticLinter> LinterPin = LinterWeak.Pin();
-		if (!LinterPin.IsValid())
-		{
-			UE_LOG(LogTemp, Warning, TEXT("FScanTask: Linter was destroyed during scan"));
-			return;
-		}
+		// Small sleep to allow UI thread to process events
+		FPlatformProcess::Sleep(0.001f); // 1ms sleep between assets
 	}
 
 	TSharedPtr<FStaticLinter> LinterPin = LinterWeak.Pin();
@@ -83,10 +109,16 @@ void FScanTask::DoWork()
 	// Complete scan on game thread (async)
 	AsyncTask(ENamedThreads::GameThread, [this, AllIssues]()
 	{
-		TSharedPtr<FStaticLinter> LinterPin = LinterWeak.Pin();
-		if (LinterPin.IsValid())
+		TSharedPtr<FStaticLinter> CompleteLinter = LinterWeak.Pin();
+		if (CompleteLinter.IsValid())
 		{
-			LinterPin->CompleteScan(AllIssues);
+			CompleteLinter->CompleteScan(AllIssues);
 		}
 	});
+}
+
+bool FScanTask::IsCancelRequested() const
+{
+	TSharedPtr<FStaticLinter> LinterPin = LinterWeak.Pin();
+	return LinterPin.IsValid() && LinterPin->IsCancelRequested();
 }

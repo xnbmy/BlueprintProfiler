@@ -142,6 +142,9 @@ public:
 		RETURN_QUICK_DECLARE_CYCLE_STAT(FScanTask, STATGROUP_ThreadPoolAsyncTasks);
 	}
 
+	/** Check if scan has been cancelled */
+	bool IsCancelRequested() const;
+
 private:
 	TWeakPtr<FStaticLinter> LinterWeak;
 	TArray<FAssetData> Assets;
