@@ -66,6 +66,7 @@ public:
 	TArray<FLintIssue> GetIssues() const { return Issues; }
 	TArray<FLintIssue> GetIssuesByType(ELintIssueType Type) const;
 	FScanProgress GetScanProgress() const { return CurrentProgress; }
+	void ClearIssues() { Issues.Empty(); }
 
 	// Events
 	FOnScanComplete OnScanComplete;

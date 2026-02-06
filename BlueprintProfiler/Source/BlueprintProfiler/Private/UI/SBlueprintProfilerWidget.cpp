@@ -485,13 +485,14 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 									return FReply::Handled();
 								})
 							]
-							
-							// Refresh Button
+
+							// Clear Data Button
 							+ SHorizontalBox::Slot()
 							.AutoWidth()
 							[
 								SNew(SButton)
-								.Text(LOCTEXT("Refresh", "刷新"))
+								.Text(LOCTEXT("ClearData", "清除数据"))
+								.ToolTipText(LOCTEXT("ClearDataTooltip", "清除所有显示的数据（运行时数据和静态扫描数据）"))
 								.OnClicked(this, &SBlueprintProfilerWidget::OnRefreshData)
 							]
 						]
@@ -1016,50 +1017,81 @@ FReply SBlueprintProfilerWidget::OnScanSelectedFolders()
 {
 	if (StaticLinter.IsValid())
 	{
-		// For now, implement a simple folder selection - in a real implementation,
-		// this would open a folder picker dialog
-		TArray<FString> SelectedFolders;
-		
-		// Example folders - in practice, these would come from a folder picker dialog
-		SelectedFolders.Add(TEXT("/Game/Blueprints"));
-		SelectedFolders.Add(TEXT("/Game/Characters"));
-		
-		if (SelectedFolders.Num() > 0)
+		// 打开文件夹选择对话框
+		IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
+		if (DesktopPlatform)
 		{
-			bIsStaticScanning = true;
-			
-			if (StatusText.IsValid())
+			const void* ParentWindowWindowHandle = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
+			FString SelectedFolder;
+			const FString Title = LOCTEXT("FolderSelectTitle", "选择要扫描的蓝图文件夹").ToString();
+
+			// 打开文件夹选择对话框（UE 5.6 版本只支持选择单个文件夹）
+			if (DesktopPlatform->OpenDirectoryDialog(
+				ParentWindowWindowHandle,
+				Title,
+				FPaths::ProjectContentDir(),
+				SelectedFolder))
 			{
-				StatusText->SetText(FText::Format(
-					LOCTEXT("StatusScanningFolders", "正在扫描 {0} 个选中文件夹..."),
-					FText::AsNumber(SelectedFolders.Num())
-				));
-			}
-			
-			if (ProgressBar.IsValid())
-			{
-				ProgressBar->SetVisibility(EVisibility::Visible);
-				ProgressBar->SetPercent(0.0f);
-			}
-			
-			if (ProgressDetailsText.IsValid())
-			{
-				ProgressDetailsText->SetVisibility(EVisibility::Visible);
-			}
-			
-			if (TimeRemainingText.IsValid())
-			{
-				TimeRemainingText->SetVisibility(EVisibility::Visible);
-			}
-			
-			// Start folder scan
-			StaticLinter->ScanSelectedFolders(SelectedFolders);
-		}
-		else
-		{
-			if (StatusText.IsValid())
-			{
-				StatusText->SetText(LOCTEXT("StatusNoFoldersSelected", "未选择要扫描的文件夹"));
+				// 将文件系统路径转换为虚幻引擎资产路径
+				FString AssetPath;
+				const FString ContentDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectContentDir());
+
+				if (SelectedFolder.StartsWith(ContentDir, ESearchCase::IgnoreCase))
+				{
+					// 移除 Content 目录部分，并添加 /Game 前缀
+					FString RelativePath = SelectedFolder.RightChop(ContentDir.Len());
+					// 移除可能的斜杠前缀
+					RelativePath.RemoveFromStart(TEXT("/"));
+					// 添加 /Game 前缀
+					AssetPath = FString::Printf(TEXT("/Game/%s"), *RelativePath);
+				}
+				else
+				{
+					// 如果不在 Content 目录下，尝试使用相对路径
+					AssetPath = SelectedFolder;
+				}
+
+				if (!AssetPath.IsEmpty())
+				{
+					TArray<FString> AssetPaths;
+					AssetPaths.Add(AssetPath);
+
+					bIsStaticScanning = true;
+
+					if (StatusText.IsValid())
+					{
+						StatusText->SetText(FText::Format(
+							LOCTEXT("StatusScanningFolders", "正在扫描文件夹: {0}"),
+							FText::FromString(AssetPath)
+						));
+					}
+
+					if (ProgressBar.IsValid())
+					{
+						ProgressBar->SetVisibility(EVisibility::Visible);
+						ProgressBar->SetPercent(0.0f);
+					}
+
+					if (ProgressDetailsText.IsValid())
+					{
+						ProgressDetailsText->SetVisibility(EVisibility::Visible);
+					}
+
+					if (TimeRemainingText.IsValid())
+					{
+						TimeRemainingText->SetVisibility(EVisibility::Visible);
+					}
+
+					// Start folder scan
+					StaticLinter->ScanSelectedFolders(AssetPaths);
+				}
+				else
+				{
+					if (StatusText.IsValid())
+					{
+						StatusText->SetText(LOCTEXT("StatusInvalidFolder", "所选文件夹不在项目 Content 目录中"));
+					}
+				}
 			}
 		}
 	}
@@ -1300,16 +1332,30 @@ FReply SBlueprintProfilerWidget::OnExportToJSON()
 
 FReply SBlueprintProfilerWidget::OnRefreshData()
 {
-	RefreshData();
-	
+	// 清除所有显示的数据（运行时数据、静态扫描数据、会话历史）
+	AllDataItems.Empty();
+	FilteredDataItems.Empty();
+
+	// 也清除 RuntimeProfiler 和 StaticLinter 中的数据
+	if (RuntimeProfiler.IsValid())
+	{
+		RuntimeProfiler->ClearSessionHistory();
+	}
+	if (StaticLinter.IsValid())
+	{
+		StaticLinter->ClearIssues();
+	}
+
+	if (DataListView.IsValid())
+	{
+		DataListView->RequestListRefresh();
+	}
+
 	if (StatusText.IsValid())
 	{
-		StatusText->SetText(FText::Format(
-			LOCTEXT("StatusRefreshed", "已刷新 - {0} 个项目"),
-			FText::AsNumber(FilteredDataItems.Num())
-		));
+		StatusText->SetText(LOCTEXT("StatusCleared", "数据已清除"));
 	}
-	
+
 	return FReply::Handled();
 }
 
