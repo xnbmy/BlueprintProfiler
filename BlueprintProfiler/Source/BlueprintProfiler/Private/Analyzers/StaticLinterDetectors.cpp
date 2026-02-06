@@ -8,6 +8,12 @@
 #include "K2Node_VariableSet.h"
 #include "K2Node_CustomEvent.h"
 #include "K2Node_MacroInstance.h"
+#include "K2Node_BaseMCDelegate.h"
+#include "K2Node_AddDelegate.h"
+#include "K2Node_AssignDelegate.h"
+#include "K2Node_CallDelegate.h"
+#include "K2Node_RemoveDelegate.h"
+#include "K2Node_ClearDelegate.h"
 #include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphNode.h"
 #include "EdGraph/EdGraphPin.h"
@@ -85,6 +91,46 @@ void FStaticLinter::DetectDeadNodes(UBlueprint* Blueprint, TArray<FLintIssue>& O
 			{
 				// Track custom event references
 				LocalReferencedCustomEvents.Add(CustomEventNode->NodeGuid);
+			}
+			// Track event dispatcher references
+			else if (UK2Node_BaseMCDelegate* DelegateNode = Cast<UK2Node_BaseMCDelegate>(Node))
+			{
+				// Get the delegate name (event dispatcher name)
+				FName DelegateName = DelegateNode->GetPropertyName();
+				if (DelegateName != NAME_None)
+				{
+					// Track the delegate as referenced
+					LocalReferencedFunctions.Add(DelegateName);
+					ReferencedFunctions.Add(DelegateName);
+					
+					// For AddDelegate and AssignDelegate nodes, also track the connected custom event
+					if (Cast<UK2Node_AddDelegate>(Node) || Cast<UK2Node_AssignDelegate>(Node))
+					{
+						// Use GetDelegatePin() to get the delegate input pin
+						UEdGraphPin* DelegatePin = DelegateNode->GetDelegatePin();
+						if (DelegatePin && DelegatePin->LinkedTo.Num() > 0)
+						{
+							// The connected node should be a custom event
+							for (UEdGraphPin* LinkedPin : DelegatePin->LinkedTo)
+							{
+								if (LinkedPin && LinkedPin->GetOwningNode())
+								{
+									UEdGraphNode* ConnectedNode = LinkedPin->GetOwningNode();
+									if (UK2Node_CustomEvent* BoundEventNode = Cast<UK2Node_CustomEvent>(ConnectedNode))
+									{
+										FName EventName = BoundEventNode->GetFunctionName();
+										if (EventName != NAME_None)
+										{
+											LocalReferencedFunctions.Add(EventName);
+											ReferencedFunctions.Add(EventName);
+											LocalReferencedCustomEvents.Add(BoundEventNode->NodeGuid);
+										}
+									}
+								}
+							}
+						}
+					}
+				}
 			}
 		}
 	}
@@ -174,6 +220,13 @@ void FStaticLinter::DetectDeadNodes(UBlueprint* Blueprint, TArray<FLintIssue>& O
 	// Check for unreferenced blueprint variables
 	for (FBPVariableDescription& Variable : Blueprint->NewVariables)
 	{
+		// Skip Event Dispatchers (multicast delegates) - they are not regular variables
+		// Event Dispatchers are detected separately via UK2Node_BaseMCDelegate nodes
+		if (Variable.VarType.PinCategory == UEdGraphSchema_K2::PC_MCDelegate)
+		{
+			continue;
+		}
+		
 		if (!LocalReferencedVariables.Contains(Variable.VarName))
 		{
 			FLintIssue Issue;
@@ -183,6 +236,33 @@ void FStaticLinter::DetectDeadNodes(UBlueprint* Blueprint, TArray<FLintIssue>& O
 			Issue.Description = FString::Printf(TEXT("Blueprint variable '%s' is declared but never used"), *Issue.NodeName);
 			Issue.Severity = CalculateIssueSeverity(ELintIssueType::DeadNode);
 			// Note: Variables don't have NodeGuid, so we leave it empty
+			
+			OutIssues.Add(Issue);
+		}
+	}
+	
+	// Check for unreferenced Event Dispatchers
+	// Event Dispatchers are stored as variables but referenced via UK2Node_BaseMCDelegate nodes
+	for (FBPVariableDescription& Variable : Blueprint->NewVariables)
+	{
+		// Only check Event Dispatchers
+		if (Variable.VarType.PinCategory != UEdGraphSchema_K2::PC_MCDelegate)
+		{
+			continue;
+		}
+		
+		FName DispatcherName = Variable.VarName;
+		bool bIsReferenced = LocalReferencedFunctions.Contains(DispatcherName) || ReferencedFunctions.Contains(DispatcherName);
+		
+		if (!bIsReferenced)
+		{
+			FLintIssue Issue;
+			Issue.Type = ELintIssueType::DeadNode;
+			Issue.BlueprintPath = Blueprint->GetPathName();
+			Issue.NodeName = DispatcherName.ToString();
+			Issue.Description = FString::Printf(TEXT("Event Dispatcher '%s' is declared but never used"), *Issue.NodeName);
+			Issue.Severity = ESeverity::Low; // Event dispatchers being unused is low severity
+			// Note: Event Dispatchers don't have NodeGuid, so we leave it empty
 			
 			OutIssues.Add(Issue);
 		}
@@ -573,6 +653,40 @@ void FStaticLinter::DetectUnusedFunctions(UBlueprint* Blueprint, TArray<FLintIss
 				else if (UK2Node_CustomEvent* CustomEventNode = Cast<UK2Node_CustomEvent>(Node))
 				{
 					// 自定义事件可能被其他节点通过 GUID 调用
+				}
+				// 检查事件分发器绑定 - 这是跨蓝图引用的重要来源
+				else if (UK2Node_BaseMCDelegate* DelegateNode = Cast<UK2Node_BaseMCDelegate>(Node))
+				{
+					FName DelegateName = DelegateNode->GetPropertyName();
+					if (DelegateName != NAME_None)
+					{
+						ReferencedFunctions.Add(DelegateName);
+						
+						// 对于 AddDelegate 和 AssignDelegate，还要记录被绑定的自定义事件
+						if (Cast<UK2Node_AddDelegate>(Node) || Cast<UK2Node_AssignDelegate>(Node))
+						{
+							// 使用 GetDelegatePin() 获取委托输入引脚
+							UEdGraphPin* DelegatePin = DelegateNode->GetDelegatePin();
+							if (DelegatePin && DelegatePin->LinkedTo.Num() > 0)
+							{
+								for (UEdGraphPin* LinkedPin : DelegatePin->LinkedTo)
+								{
+									if (LinkedPin && LinkedPin->GetOwningNode())
+									{
+										UEdGraphNode* ConnectedNode = LinkedPin->GetOwningNode();
+										if (UK2Node_CustomEvent* BoundEvent = Cast<UK2Node_CustomEvent>(ConnectedNode))
+										{
+											FName EventName = BoundEvent->GetFunctionName();
+											if (EventName != NAME_None)
+											{
+												ReferencedFunctions.Add(EventName);
+											}
+										}
+									}
+								}
+							}
+						}
+					}
 				}
 			}
 		}
