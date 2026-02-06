@@ -7,6 +7,7 @@
 #include "K2Node_VariableGet.h"
 #include "K2Node_VariableSet.h"
 #include "K2Node_CustomEvent.h"
+#include "K2Node_FunctionEntry.h"
 #include "K2Node_MacroInstance.h"
 #include "K2Node_BaseMCDelegate.h"
 #include "K2Node_AddDelegate.h"
@@ -276,6 +277,13 @@ void FStaticLinter::DetectOrphanNodes(UBlueprint* Blueprint, TArray<FLintIssue>&
 		return;
 	}
 
+	// Skip interface blueprints - their functions are called by other blueprints that implement the interface
+	// Interface functions don't need to be connected to execution flow in the interface itself
+	if (Blueprint->BlueprintType == BPTYPE_Interface)
+	{
+		return;
+	}
+
 	// Get all graphs to analyze
 	TArray<UEdGraph*> AllGraphs = GetAllGraphs(Blueprint);
 
@@ -342,20 +350,25 @@ void FStaticLinter::DetectOrphanNodes(UBlueprint* Blueprint, TArray<FLintIssue>&
 					}
 
 					bool bHasDataOutputConnections = false;
+					bool bHasDataInputConnections = false;
 
-					// Check data output pins for connections (ignore exec pins for pure nodes)
+					// Check data pins for connections (ignore exec pins for pure nodes)
 					for (UEdGraphPin* Pin : K2Node->Pins)
 					{
-						if (Pin && Pin->Direction == EGPD_Output &&
-							Pin->PinType.PinCategory != UEdGraphSchema_K2::PC_Exec &&
-							Pin->LinkedTo.Num() > 0)
+						if (Pin && Pin->PinType.PinCategory != UEdGraphSchema_K2::PC_Exec)
 						{
-							bHasDataOutputConnections = true;
-							break;
+							if (Pin->Direction == EGPD_Output && Pin->LinkedTo.Num() > 0)
+							{
+								bHasDataOutputConnections = true;
+							}
+							else if (Pin->Direction == EGPD_Input && Pin->LinkedTo.Num() > 0)
+							{
+								bHasDataInputConnections = true;
+							}
 						}
 					}
 
-					// Report if pure node has no data output connections
+					// Report if pure node has no data output connections (输出未连接)
 					if (!bHasDataOutputConnections)
 					{
 						FLintIssue Issue;
@@ -363,7 +376,20 @@ void FStaticLinter::DetectOrphanNodes(UBlueprint* Blueprint, TArray<FLintIssue>&
 						Issue.BlueprintPath = Blueprint->GetPathName();
 						Issue.NodeName = NodeTitle;
 						Issue.Description = FString::Printf(TEXT("纯节点 '%s' 的输出没有连接到任何节点"), *Issue.NodeName);
-						Issue.Severity = ESeverity::Low; // 孤立节点不是严重问题
+						Issue.Severity = ESeverity::Low;
+						Issue.NodeGuid = K2Node->NodeGuid;
+
+						OutIssues.Add(Issue);
+					}
+					// Report if pure node has data inputs but no data output connections (有输入但无输出)
+					else if (bHasDataInputConnections && !bHasDataOutputConnections)
+					{
+						FLintIssue Issue;
+						Issue.Type = ELintIssueType::OrphanNode;
+						Issue.BlueprintPath = Blueprint->GetPathName();
+						Issue.NodeName = NodeTitle;
+						Issue.Description = FString::Printf(TEXT("纯节点 '%s' 有输入但输出未连接"), *Issue.NodeName);
+						Issue.Severity = ESeverity::Low;
 						Issue.NodeGuid = K2Node->NodeGuid;
 
 						OutIssues.Add(Issue);
@@ -376,8 +402,8 @@ void FStaticLinter::DetectOrphanNodes(UBlueprint* Blueprint, TArray<FLintIssue>&
 					FString NodeTitle = Node->GetNodeTitle(ENodeTitleType::ListView).ToString();
 					bool bShouldSkip = false;
 
-					// 1. 跳过 Event 和 CustomEvent（入口节点）
-					if (Node->IsA<UK2Node_Event>() || Node->IsA<UK2Node_CustomEvent>())
+					// 1. 跳过 Event、CustomEvent 和 FunctionEntry（入口节点）
+					if (Node->IsA<UK2Node_Event>() || Node->IsA<UK2Node_CustomEvent>() || Node->IsA<UK2Node_FunctionEntry>())
 					{
 						bShouldSkip = true;
 					}
@@ -424,12 +450,13 @@ void FStaticLinter::DetectOrphanNodes(UBlueprint* Blueprint, TArray<FLintIssue>&
 							}
 						}
 
-						// 只有当执行引脚完全未连接（既没有输入连接也没有输出连接）时才报告
+						// 当输入执行引脚未连接时报告（输出引脚连接不影响）
 						// 这会正确跳过：
-						// - Event 节点（没有输入但有输出）
-						// - Set Return Value 节点（可能有输入但没有输出）
-						// - 其他正常连接的节点
-						if (bHasExecutionPins && !bHasExecInputConnected && !bHasExecOutputConnected)
+						// - Event 节点（没有输入但有输出）- 已在上面跳过
+						// - 正常连接的节点（输入已连接）
+						// 会报告：
+						// - 孤立节点（输入未连接，无论输出是否连接）
+						if (bHasExecutionPins && !bHasExecInputConnected)
 						{
 							FLintIssue Issue;
 							Issue.Type = ELintIssueType::OrphanNode;
