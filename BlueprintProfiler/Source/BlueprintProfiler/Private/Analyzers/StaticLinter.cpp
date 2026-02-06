@@ -3,6 +3,7 @@
 #include "Engine/Blueprint.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
+#include "Engine/GameInstance.h"
 #include "Components/ActorComponent.h"
 #include "K2Node.h"
 #include "K2Node_Event.h"
@@ -1179,6 +1180,28 @@ bool FStaticLinter::ShouldProcessAsset(const FAssetData& AssetData, const FScanC
 		}
 	}
 	
+	// Exclude GameInstance blueprints
+	UBlueprint* Blueprint = Cast<UBlueprint>(AssetData.GetAsset());
+	if (Blueprint)
+	{
+		if (Blueprint->GeneratedClass)
+		{
+			if (Blueprint->GeneratedClass->IsChildOf(UGameInstance::StaticClass()))
+			{
+				UE_LOG(LogTemp, Log, TEXT("Excluding GameInstance blueprint: %s"), *Blueprint->GetName());
+				return false;
+			}
+		}
+		else if (Blueprint->ParentClass)
+		{
+			if (Blueprint->ParentClass->IsChildOf(UGameInstance::StaticClass()))
+			{
+				UE_LOG(LogTemp, Log, TEXT("Excluding GameInstance blueprint: %s"), *Blueprint->GetName());
+				return false;
+			}
+		}
+	}
+	
 	return true;
 }
 
@@ -1334,6 +1357,16 @@ void FStaticLinter::DetectUnusedFunctions(UBlueprint* Blueprint, TArray<FLintIss
 		return;
 	}
 
+	// 1. 跳过 GameInstance 蓝图
+	if (Blueprint->GeneratedClass && Blueprint->GeneratedClass->IsChildOf(UGameInstance::StaticClass()))
+	{
+		return;
+	}
+	else if (Blueprint->ParentClass && Blueprint->ParentClass->IsChildOf(UGameInstance::StaticClass()))
+	{
+		return;
+	}
+
 	// 获取项目中所有 Blueprint 来检测函数调用
 	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
 	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
@@ -1353,8 +1386,6 @@ void FStaticLinter::DetectUnusedFunctions(UBlueprint* Blueprint, TArray<FLintIss
 	// 收集所有被调用的函数名
 	TSet<FName> ReferencedFunctions;
 	TMap<FName, int32> FunctionCallCount; // 函数名 -> 调用次数
-	// 同时收集函数图的 FName，因为函数图的名称格式可能与函数引用不同
-	TSet<FName> FunctionGraphNames;  // 用于存储函数图的名称
 
 	for (const FAssetData& AssetData : AllBlueprintAssets)
 	{
@@ -1362,15 +1393,6 @@ void FStaticLinter::DetectUnusedFunctions(UBlueprint* Blueprint, TArray<FLintIss
 		if (!BP)
 		{
 			continue;
-		}
-
-		// 首先收集所有函数图的名称
-		for (UEdGraph* FuncGraph : BP->FunctionGraphs)
-		{
-			if (FuncGraph)
-			{
-				FunctionGraphNames.Add(FuncGraph->GetFName());
-			}
 		}
 
 		TArray<UEdGraph*> AllGraphs = GetAllGraphs(BP);
@@ -1391,6 +1413,11 @@ void FStaticLinter::DetectUnusedFunctions(UBlueprint* Blueprint, TArray<FLintIss
 						ReferencedFunctions.Add(FunctionName);
 						FunctionCallCount.FindOrAdd(FunctionName)++;
 					}
+				}
+				// 也检查自定义事件调用
+				else if (UK2Node_CustomEvent* CustomEventNode = Cast<UK2Node_CustomEvent>(Node))
+				{
+					// 自定义事件可能被其他节点通过 GUID 调用
 				}
 			}
 		}
@@ -1511,15 +1538,19 @@ void FStaticLinter::DetectUnusedFunctions(UBlueprint* Blueprint, TArray<FLintIss
 			}
 		}
 
-		// 6. 检查函数是否被引用（使用函数引用名或函数图名）
-		//    注意：函数引用名和函数图名可能格式不同，所以都要检查
+		// 6. 检查函数是否被引用
 		bool bIsReferenced = false;
 
-		// 首先检查函数图名是否在已收集的函数图名中（被其他 Blueprint 定义）
-		// 这表示函数被其他 Blueprint 实现
-		if (FunctionGraphNames.Contains(FunctionName))
+		// 直接检查函数名是否在引用列表中
+		if (ReferencedFunctions.Contains(FunctionName))
 		{
-			// 检查是否有其他 Blueprint 调用了这个函数
+			bIsReferenced = true;
+		}
+
+		// 7. 更全面的跨蓝图引用检查
+		if (!bIsReferenced)
+		{
+			// 遍历所有其他 Blueprint，检查是否有对这个函数的引用
 			for (const FAssetData& AssetData : AllBlueprintAssets)
 			{
 				UBlueprint* BP = Cast<UBlueprint>(AssetData.GetAsset());
@@ -1540,9 +1571,17 @@ void FStaticLinter::DetectUnusedFunctions(UBlueprint* Blueprint, TArray<FLintIss
 					{
 						if (UK2Node_CallFunction* CallFuncNode = Cast<UK2Node_CallFunction>(Node))
 						{
+							// 检查函数引用
 							FName CalledFunctionName = CallFuncNode->FunctionReference.GetMemberName();
-							// 调试日志：输出函数名比较
 							if (CalledFunctionName == FunctionName)
+							{
+								bIsReferenced = true;
+								break;
+							}
+
+							// 检查函数引用的完整路径
+							FString FunctionPath = CallFuncNode->FunctionReference.GetMemberName().ToString();
+							if (FunctionPath.Contains(FunctionNameStr))
 							{
 								bIsReferenced = true;
 								break;
@@ -1563,18 +1602,11 @@ void FStaticLinter::DetectUnusedFunctions(UBlueprint* Blueprint, TArray<FLintIss
 			}
 		}
 
-		// 也检查函数引用名（从 CallFunction 节点收集的）
-		if (!bIsReferenced && ReferencedFunctions.Contains(FunctionName))
-		{
-			bIsReferenced = true;
-		}
-
 		// 调试：输出未引用的函数名
 		if (!bIsReferenced)
 		{
 			UE_LOG(LogTemp, Warning, TEXT("未引用函数: %s (在 Blueprint: %s)"), *FunctionNameStr, *Blueprint->GetName());
 			UE_LOG(LogTemp, Warning, TEXT("  ReferencedFunctions 包含此函数: %d"), ReferencedFunctions.Contains(FunctionName));
-			UE_LOG(LogTemp, Warning, TEXT("  FunctionGraphNames 包含此函数: %d"), FunctionGraphNames.Contains(FunctionName));
 		}
 
 		if (bIsReferenced)
