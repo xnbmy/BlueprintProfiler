@@ -40,6 +40,10 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 	StaticLinter = MakeShared<FStaticLinter>();
 	MemoryAnalyzer = MakeShared<FMemoryAnalyzer>();
 
+	// Bind to memory analyzer events
+	MemoryAnalyzer->OnReferenceCountComplete.AddRaw(this, &SBlueprintProfilerWidget::OnReferenceCountAnalysisComplete);
+	MemoryAnalyzer->OnAnalysisProgress.AddRaw(this, &SBlueprintProfilerWidget::OnReferenceCountProgress);
+
 	// Initialize state
 	CurrentRecordingState = ERecordingState::Stopped;
 	bIsStaticScanning = false;
@@ -394,7 +398,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 						.Padding(0, 2)
 						[
 							SAssignNew(StartMemoryAnalysisButton, SButton)
-							.Text(LOCTEXT("StartMemoryAnalysis", "分析内存"))
+							.Text(LOCTEXT("StartMemoryAnalysis", "分析引用"))
 							.OnClicked(this, &SBlueprintProfilerWidget::OnStartMemoryAnalysis)
 							.IsEnabled(this, &SBlueprintProfilerWidget::CanStartMemoryAnalysis)
 						]
@@ -811,6 +815,51 @@ void SBlueprintProfilerWidget::SetMemoryData(const TArray<FMemoryAnalysisResult>
 	}
 }
 
+void SBlueprintProfilerWidget::SetAssetReferenceData(const TArray<FAssetReferenceCount>& AssetReferences)
+{
+	// Clear existing memory data (we reuse Memory type for reference counts)
+	AllDataItems.RemoveAll([](const TSharedPtr<FProfilerDataItem>& Item)
+	{
+		return Item.IsValid() && Item->Type == EProfilerDataType::Memory;
+	});
+	
+	// Load asset registry for looking up assets
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+	
+	// Add reference count data
+	for (const FAssetReferenceCount& RefCount : AssetReferences)
+	{
+		TSharedPtr<FProfilerDataItem> Item = MakeShared<FProfilerDataItem>();
+		Item->Type = EProfilerDataType::Memory;
+		Item->Name = RefCount.AssetName;
+		Item->BlueprintName = RefCount.AssetPath;
+		Item->Category = FString::Printf(TEXT("被引用 %d 次"), RefCount.ReferenceCount);
+		Item->Description = FString::Printf(TEXT("类型: %s, 大小: %.2f MB, 被 %d 个资产引用"),
+			*RefCount.AssetType, RefCount.AssetSize, RefCount.ReferenceCount);
+		Item->Value = RefCount.ReferenceCount;
+		Item->Severity = RefCount.ReferenceCount > 10 ? ESeverity::High :
+		                (RefCount.ReferenceCount > 5 ? ESeverity::Medium : ESeverity::Low);
+		
+		// Set target object for double-click navigation
+		FAssetData AssetData = AssetRegistry.GetAssetByObjectPath(FSoftObjectPath(RefCount.AssetPath));
+		if (AssetData.IsValid())
+		{
+			Item->TargetObject = AssetData.GetAsset();
+			Item->AssetObject = AssetData.GetAsset();
+		}
+		
+		AllDataItems.Add(Item);
+	}
+	
+	UpdateFilteredData();
+	
+	if (DataListView.IsValid())
+	{
+		DataListView->RequestListRefresh();
+	}
+}
+
 // UI event handlers
 FReply SBlueprintProfilerWidget::OnStartRuntimeRecording()
 {
@@ -1136,53 +1185,67 @@ FReply SBlueprintProfilerWidget::OnStartMemoryAnalysis()
 		
 		if (StatusText.IsValid())
 		{
-			StatusText->SetText(LOCTEXT("StatusAnalyzing", "正在分析内存..."));
+			StatusText->SetText(LOCTEXT("StatusAnalyzingRefs", "正在分析资产引用关系..."));
 		}
 		
-		// Get all blueprint assets to analyze
-		FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-		IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
-		
-		TArray<FAssetData> BlueprintAssets;
-		AssetRegistry.GetAssetsByClass(UBlueprint::StaticClass()->GetClassPathName(), BlueprintAssets);
-		
-		if (BlueprintAssets.Num() > 0)
+		// Show progress bar
+		if (ProgressBar.IsValid())
 		{
-			// Analyze the first blueprint as an example
-			if (UBlueprint* Blueprint = Cast<UBlueprint>(BlueprintAssets[0].GetAsset()))
-			{
-				// Perform synchronous analysis for now
-				MemoryAnalyzer->AnalyzeBlueprint(Blueprint);
-				
-				// Get analysis results
-				FMemoryAnalysisResult Result = MemoryAnalyzer->GetAnalysisResult(Blueprint);
-				TArray<FLargeResourceReference> LargeResources = MemoryAnalyzer->GetLargeResourceReferences(10.0f);
-				
-				// Update UI with results
-				TArray<FMemoryAnalysisResult> Results;
-				Results.Add(Result);
-				SetMemoryData(Results);
-				
-				if (StatusText.IsValid())
-				{
-					StatusText->SetText(FText::Format(
-						LOCTEXT("StatusMemoryComplete", "内存分析完成。发现 {0} 个大资源。"),
-						FText::AsNumber(LargeResources.Num())
-					));
-				}
-			}
-		}
-		else
-		{
-			if (StatusText.IsValid())
-			{
-				StatusText->SetText(LOCTEXT("StatusNoBlueprints", "未找到要分析的蓝图"));
-			}
+			ProgressBar->SetPercent(0.0f);
+			ProgressBar->SetVisibility(EVisibility::Visible);
 		}
 		
-		bIsMemoryAnalyzing = false;
+		// Clear previous data
+		MemoryAnalyzer->ClearReferenceCountData();
+		
+		// Perform reference count analysis (async)
+		MemoryAnalyzer->AnalyzeAssetReferenceCounts();
 	}
 	return FReply::Handled();
+}
+
+void SBlueprintProfilerWidget::OnReferenceCountProgress(float Progress)
+{
+	// Update progress bar
+	if (ProgressBar.IsValid())
+	{
+		ProgressBar->SetPercent(Progress);
+	}
+	
+	// Update status text with progress
+	if (StatusText.IsValid())
+	{
+		StatusText->SetText(FText::Format(
+			LOCTEXT("StatusAnalyzingRefsProgress", "正在分析资产引用关系... {0}%"),
+			FText::AsNumber(FMath::RoundToInt(Progress * 100))
+		));
+	}
+}
+
+void SBlueprintProfilerWidget::OnReferenceCountAnalysisComplete(const FMemoryAnalysisResult& Result)
+{
+	// Get top referenced assets
+	TArray<FAssetReferenceCount> TopAssets = MemoryAnalyzer->GetTopReferencedAssets(100);
+	
+	// Update UI with results
+	SetAssetReferenceData(TopAssets);
+	
+	// Hide progress bar
+	if (ProgressBar.IsValid())
+	{
+		ProgressBar->SetVisibility(EVisibility::Collapsed);
+	}
+	
+	if (StatusText.IsValid())
+	{
+		StatusText->SetText(FText::Format(
+			LOCTEXT("StatusRefCountComplete", "引用分析完成。发现 {0} 个被引用的资产，显示前 {1} 个。"),
+			FText::AsNumber(MemoryAnalyzer->GetAssetReferenceCounts().Num()),
+			FText::AsNumber(TopAssets.Num())
+		));
+	}
+	
+	bIsMemoryAnalyzing = false;
 }
 
 FReply SBlueprintProfilerWidget::OnExportToCSV()
@@ -2296,18 +2359,77 @@ void SBlueprintProfilerWidget::JumpToNode(TSharedPtr<FProfilerDataItem> Item)
 		return;
 	}
 
-	// 1. 获取蓝图对象
+	// 获取目标对象
+	UObject* TargetObject = Item->TargetObject.Get();
+	
+	// 1. 如果是内存/引用计数类型，直接打开资产
+	if (Item->Type == EProfilerDataType::Memory)
+	{
+		if (TargetObject)
+		{
+			// 直接打开资产（可以是材质、纹理、蓝图等任何资产）
+			if (GEditor)
+			{
+				GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(TargetObject);
+				
+				if (StatusText.IsValid())
+				{
+					StatusText->SetText(FText::Format(
+						LOCTEXT("StatusAssetOpened", "已打开资产 '{0}'"),
+						FText::FromString(Item->Name)
+					));
+				}
+			}
+		}
+		else
+		{
+			// 尝试通过路径加载资产
+			FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+			IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+			
+			FAssetData AssetData = AssetRegistry.GetAssetByObjectPath(FSoftObjectPath(Item->BlueprintName));
+			if (AssetData.IsValid())
+			{
+				UObject* Asset = AssetData.GetAsset();
+				if (Asset && GEditor)
+				{
+					GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(Asset);
+					
+					if (StatusText.IsValid())
+					{
+						StatusText->SetText(FText::Format(
+							LOCTEXT("StatusAssetOpened", "已打开资产 '{0}'"),
+							FText::FromString(Item->Name)
+						));
+					}
+				}
+			}
+			else
+			{
+				if (StatusText.IsValid())
+				{
+					StatusText->SetText(FText::Format(
+						LOCTEXT("StatusAssetNotFound", "无法找到资产 '{0}'"),
+						FText::FromString(Item->Name)
+					));
+				}
+			}
+		}
+		return;
+	}
+
+	// 2. 原有的蓝图节点跳转逻辑（用于运行时和代码检查类型）
 	UBlueprint* BP = nullptr;
-	if (UObject* Obj = Item->TargetObject.Get())
+	if (TargetObject)
 	{
 		// 如果 TargetObject 是 Node，获取它所属的蓝图
-		if (UEdGraphNode* Node = Cast<UEdGraphNode>(Obj))
+		if (UEdGraphNode* Node = Cast<UEdGraphNode>(TargetObject))
 		{
 			BP = Node->GetTypedOuter<UBlueprint>();
 		}
 		else
 		{
-			BP = Cast<UBlueprint>(Obj);
+			BP = Cast<UBlueprint>(TargetObject);
 		}
 	}
 
@@ -2323,7 +2445,7 @@ void SBlueprintProfilerWidget::JumpToNode(TSharedPtr<FProfilerDataItem> Item)
 		return;
 	}
 
-	// 2. 查找目标节点（使用引擎内置工具，递归搜索所有图）
+	// 3. 查找目标节点（使用引擎内置工具，递归搜索所有图）
 	UEdGraphNode* TargetNode = nullptr;
 	if (Item->NodeGuid.IsValid())
 	{
@@ -2331,7 +2453,7 @@ void SBlueprintProfilerWidget::JumpToNode(TSharedPtr<FProfilerDataItem> Item)
 		TargetNode = FBlueprintEditorUtils::GetNodeByGUID(BP, Item->NodeGuid);
 	}
 
-	// 3. 执行跳转
+	// 4. 执行跳转
 	if (TargetNode)
 	{
 		// 使用蓝图专用 API 跳转到节点

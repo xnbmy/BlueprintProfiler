@@ -66,6 +66,8 @@ private:
 	UBlueprint* Blueprint;
 };
 
+
+
 FMemoryAnalyzer::FMemoryAnalyzer()
 	: bAnalysisInProgress(false)
 	, bCancelRequested(false)
@@ -588,11 +590,9 @@ float FMemoryAnalyzer::CalculateObjectSize(UObject* Object) const
 		return 0.0f;
 	}
 
-	// Use UE's built-in resource size calculation
-	FResourceSizeEx ResourceSize;
-	Object->GetResourceSizeEx(ResourceSize);
-	
-	return (float)ResourceSize.GetTotalMemoryBytes();
+	// Note: GetResourceSizeEx must be called on game thread
+	// For background thread analysis, return 0 or use a different approach
+	return 0.0f;
 }
 
 void FMemoryAnalyzer::BuildReferenceTree(UObject* RootObject, TSharedPtr<FReferenceNode> ParentNode, TSet<UObject*>& VisitedObjects, int32 CurrentDepth, int32 MaxDepth)
@@ -782,4 +782,215 @@ void FMemoryAnalyzer::SetLargeResourceThreshold(float ThresholdMB)
 {
 	LargeResourceThresholdMB = FMath::Max(0.1f, ThresholdMB); // Minimum 0.1MB threshold
 	UE_LOG(LogTemp, Log, TEXT("Large resource threshold set to %.2f MB"), LargeResourceThresholdMB);
+}
+
+void FMemoryAnalyzer::AnalyzeAssetReferenceCounts()
+{
+	if (bAnalysisInProgress)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Analysis already in progress"));
+		return;
+	}
+
+	bAnalysisInProgress = true;
+	bCancelRequested = false;
+	AssetReferenceCounts.Empty();
+
+	UE_LOG(LogTemp, Log, TEXT("Starting asset reference count analysis..."));
+
+	// Find all assets in the project (on game thread)
+	TArray<UObject*> AllAssets;
+	FindAllAssets(AllAssets);
+
+	UE_LOG(LogTemp, Log, TEXT("Found %d assets to analyze"), AllAssets.Num());
+
+	// Store assets for processing
+	PendingAssets = AllAssets;
+	CurrentAssetIndex = 0;
+	ReferenceCountMap.Empty();
+
+	// Start processing on next tick
+	FTimerHandle TimerHandle;
+	GEditor->GetTimerManager()->SetTimer(TimerHandle, [this]()
+	{
+		ProcessNextAssetBatch();
+	}, 0.01f, false);
+}
+
+void FMemoryAnalyzer::ProcessNextAssetBatch()
+{
+	if (bCancelRequested)
+	{
+		CompleteReferenceCountAnalysis();
+		return;
+	}
+
+	// Process a small batch of assets per frame to avoid blocking
+	int32 BatchSize = 10;
+	int32 ProcessedInBatch = 0;
+
+	while (CurrentAssetIndex < PendingAssets.Num() && ProcessedInBatch < BatchSize)
+	{
+		UObject* Asset = PendingAssets[CurrentAssetIndex];
+		if (Asset)
+		{
+			CountAssetReferences(Asset, ReferenceCountMap);
+		}
+
+		CurrentAssetIndex++;
+		ProcessedInBatch++;
+	}
+
+	// Update progress
+	if (OnAnalysisProgress.IsBound())
+	{
+		float Progress = (float)CurrentAssetIndex / (float)PendingAssets.Num();
+		OnAnalysisProgress.Broadcast(Progress);
+	}
+
+	// Check if we're done
+	if (CurrentAssetIndex >= PendingAssets.Num())
+	{
+		CompleteReferenceCountAnalysis();
+	}
+	else
+	{
+		// Schedule next batch
+		FTimerHandle TimerHandle;
+		GEditor->GetTimerManager()->SetTimer(TimerHandle, [this]()
+		{
+			ProcessNextAssetBatch();
+		}, 0.01f, false);
+	}
+}
+
+void FMemoryAnalyzer::CompleteReferenceCountAnalysis()
+{
+	FScopeLock Lock(&ResultsLock);
+
+	// Convert map to array and sort
+	for (const auto& Pair : ReferenceCountMap)
+	{
+		AssetReferenceCounts.Add(Pair.Value);
+	}
+
+	// Sort by reference count (descending)
+	AssetReferenceCounts.Sort();
+
+	PendingAssets.Empty();
+	ReferenceCountMap.Empty();
+	CurrentAssetIndex = 0;
+
+	bAnalysisInProgress = false;
+	bCancelRequested = false;
+
+	UE_LOG(LogTemp, Log, TEXT("Asset reference count analysis complete. Found %d referenced assets"), AssetReferenceCounts.Num());
+
+	// Broadcast completion
+	FMemoryAnalysisResult DummyResult;
+	OnReferenceCountComplete.Broadcast(DummyResult);
+}
+
+TArray<FAssetReferenceCount> FMemoryAnalyzer::GetAssetReferenceCounts() const
+{
+	FScopeLock Lock(&ResultsLock);
+	return AssetReferenceCounts;
+}
+
+TArray<FAssetReferenceCount> FMemoryAnalyzer::GetTopReferencedAssets(int32 Count) const
+{
+	FScopeLock Lock(&ResultsLock);
+	
+	TArray<FAssetReferenceCount> TopAssets;
+	int32 NumToReturn = FMath::Min(Count, AssetReferenceCounts.Num());
+	
+	for (int32 i = 0; i < NumToReturn; i++)
+	{
+		TopAssets.Add(AssetReferenceCounts[i]);
+	}
+	
+	return TopAssets;
+}
+
+void FMemoryAnalyzer::ClearReferenceCountData()
+{
+	FScopeLock Lock(&ResultsLock);
+	AssetReferenceCounts.Empty();
+}
+
+void FMemoryAnalyzer::FindAllAssets(TArray<UObject*>& OutAssets)
+{
+	// Find all assets using UObject iterator
+	for (TObjectIterator<UObject> It; It; ++It)
+	{
+		UObject* Object = *It;
+		if (!Object)
+		{
+			continue;
+		}
+
+		// Only include assets (not transient objects)
+		if (Object->IsAsset() && IsValid(Object))
+		{
+			OutAssets.Add(Object);
+		}
+	}
+}
+
+void FMemoryAnalyzer::CountAssetReferences(UObject* Asset, TMap<FString, FAssetReferenceCount>& OutReferenceCounts)
+{
+	if (!Asset)
+	{
+		return;
+	}
+
+	// Count references for this asset
+	int32 ReferenceCount = CountAssetReferencesInternal(Asset);
+
+	FString AssetPath = Asset->GetPathName();
+	
+	// Create or update reference count entry
+	FAssetReferenceCount& RefCount = OutReferenceCounts.FindOrAdd(AssetPath);
+	RefCount.AssetPath = AssetPath;
+	RefCount.AssetName = Asset->GetName();
+	RefCount.AssetType = Asset->GetClass()->GetName();
+	RefCount.AssetSize = CalculateObjectSize(Asset) / (1024.0f * 1024.0f);
+	RefCount.ReferenceCount = ReferenceCount;
+}
+
+int32 FMemoryAnalyzer::CountAssetReferencesInternal(UObject* Asset)
+{
+	if (!Asset)
+	{
+		return 0;
+	}
+
+	// Use asset registry to find referencers
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+
+	// Get package name from asset path
+	FString AssetPath = Asset->GetPathName();
+	FName PackageName = FName(*FPackageName::ObjectPathToPackageName(AssetPath));
+	
+	if (PackageName.IsNone())
+	{
+		return 0;
+	}
+
+	// Get all assets that reference this asset
+	TArray<FAssetIdentifier> Referencers;
+	AssetRegistry.GetReferencers(PackageName, Referencers);
+
+	// Count valid referencers (excluding self-references)
+	int32 Count = 0;
+	for (const FAssetIdentifier& Referencer : Referencers)
+	{
+		if (!Referencer.PackageName.IsNone() && Referencer.PackageName != PackageName)
+		{
+			Count++;
+		}
+	}
+
+	return Count;
 }

@@ -29,6 +29,7 @@ public:
 	void SetRuntimeData(const TArray<FNodeExecutionData>& Data);
 	void SetLintIssues(const TArray<FLintIssue>& Issues);
 	void SetMemoryData(const TArray<FMemoryAnalysisResult>& Data);
+	void SetAssetReferenceData(const TArray<FAssetReferenceCount>& AssetReferences);
 
 private:
 	// UI event handlers
@@ -46,6 +47,8 @@ private:
 	FReply OnScanSelectedFolders();
 	FReply OnCancelStaticScan();
 	FReply OnStartMemoryAnalysis();
+	void OnReferenceCountProgress(float Progress);
+	void OnReferenceCountAnalysisComplete(const FMemoryAnalysisResult& Result);
 	FReply OnExportToCSV();
 	FReply OnExportToJSON();
 	FReply OnRefreshData();

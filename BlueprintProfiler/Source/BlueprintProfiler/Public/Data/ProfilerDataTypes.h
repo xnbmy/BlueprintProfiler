@@ -349,3 +349,36 @@ struct FProfilerDataItem
 		, Value(0.0f)
 	{}
 };
+
+/**
+ * Asset reference count information
+ */
+USTRUCT(BlueprintType)
+struct BLUEPRINTPROFILER_API FAssetReferenceCount
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly)
+	FString AssetPath;
+
+	UPROPERTY(BlueprintReadOnly)
+	FString AssetName;
+
+	UPROPERTY(BlueprintReadOnly)
+	FString AssetType;
+
+	UPROPERTY(BlueprintReadOnly)
+	int32 ReferenceCount = 0;
+
+	UPROPERTY(BlueprintReadOnly)
+	float AssetSize = 0.0f;
+
+	UPROPERTY(BlueprintReadOnly)
+	TArray<FString> ReferencedBy;
+
+	// For sorting: higher reference count = more shared asset
+	bool operator<(const FAssetReferenceCount& Other) const
+	{
+		return ReferenceCount > Other.ReferenceCount; // Descending order
+	}
+};

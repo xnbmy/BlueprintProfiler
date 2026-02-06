@@ -5,6 +5,7 @@
 #include "Engine/Blueprint.h"
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnAnalysisComplete, const FMemoryAnalysisResult& /* Result */);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnAnalysisProgress, float /* Progress */);
 
 /**
  * Reference node for building reference trees
@@ -49,12 +50,27 @@ public:
 	void SetLargeResourceThreshold(float ThresholdMB);
 	float GetLargeResourceThreshold() const { return LargeResourceThresholdMB; }
 
+	// Asset reference count analysis
+	void AnalyzeAssetReferenceCounts();
+	void ProcessNextAssetBatch();
+	void CompleteReferenceCountAnalysis();
+	TArray<FAssetReferenceCount> GetAssetReferenceCounts() const;
+	TArray<FAssetReferenceCount> GetTopReferencedAssets(int32 Count = 50) const;
+	void ClearReferenceCountData();
+
 	// Events
 	FOnAnalysisComplete OnAnalysisComplete;
+	FOnAnalysisComplete OnReferenceCountComplete;
+	FOnAnalysisProgress OnAnalysisProgress;
 
 	// Internal methods for async task (Exposed for FMemoryAnalysisTask)
 	void CalculateInclusiveSize(UBlueprint* Blueprint, FMemoryAnalysisResult& Result);
 	void CompleteAnalysis(UBlueprint* Blueprint, const FMemoryAnalysisResult& Result);
+
+	// Reference count analysis methods
+	void CountAssetReferences(UObject* Asset, TMap<FString, FAssetReferenceCount>& OutReferenceCounts);
+	int32 CountAssetReferencesInternal(UObject* Asset);
+	void FindAllAssets(TArray<UObject*>& OutAssets);
 
 private:
 	// Analysis methods
@@ -76,9 +92,15 @@ private:
 private:
 	TMap<TWeakObjectPtr<UObject>, FMemoryAnalysisResult> AnalysisResults;
 	TArray<FLargeResourceReference> LargeResourceReferences;
+	TArray<FAssetReferenceCount> AssetReferenceCounts;
 	bool bAnalysisInProgress;
 	bool bCancelRequested;
 	float LargeResourceThresholdMB;
+
+	// Reference count processing state
+	TArray<UObject*> PendingAssets;
+	int32 CurrentAssetIndex;
+	TMap<FString, FAssetReferenceCount> ReferenceCountMap;
 
 	// Async task management
 	TSharedPtr<class FAsyncTask<class FMemoryAnalysisTask>> CurrentAnalysisTask;
