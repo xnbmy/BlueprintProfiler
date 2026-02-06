@@ -8,6 +8,7 @@
 #include "K2Node_VariableSet.h"
 #include "K2Node_CustomEvent.h"
 #include "K2Node_FunctionEntry.h"
+#include "K2Node_ComponentBoundEvent.h"
 #include "K2Node_MacroInstance.h"
 #include "K2Node_BaseMCDelegate.h"
 #include "K2Node_AddDelegate.h"
@@ -177,45 +178,50 @@ void FStaticLinter::DetectDeadNodes(UBlueprint* Blueprint, TArray<FLintIssue>& O
 					OutIssues.Add(Issue);
 				}
 			}
-			// Check for unreferenced function definitions
-			else if (UK2Node_Event* EventNode = Cast<UK2Node_Event>(Node))
+			// Skip Component Bound Events - they are triggered by component events (overlap, hit, etc.)
+		if (UK2Node_ComponentBoundEvent* ComponentBoundEvent = Cast<UK2Node_ComponentBoundEvent>(Node))
+		{
+			continue;
+		}
+		// Check for unreferenced function definitions
+		else if (UK2Node_Event* EventNode = Cast<UK2Node_Event>(Node))
+		{
+			// Skip all built-in events (Receive*)
+			FName EventName = EventNode->GetFunctionName();
+			if (EventName.ToString().StartsWith(TEXT("Receive")))
 			{
-				// Skip all built-in events (Receive*)
-				FName EventName = EventNode->GetFunctionName();
-				if (EventName.ToString().StartsWith(TEXT("Receive")))
-				{
-					continue; // Skip all Receive* events
-				}
+				continue; // Skip all Receive* events
+			}
 
-				// Skip interface events - they are called by the blueprint system automatically
-				if (EventNode->IsInterfaceEventNode())
-				{
-					continue;
-				}
+			// Skip interface events - they are called by the blueprint system automatically
+			if (EventNode->IsInterfaceEventNode())
+			{
+				continue;
+			}
 
-				// Check if this custom event is referenced
-				bool bIsReferenced = LocalReferencedFunctions.Contains(EventName) || ReferencedFunctions.Contains(EventName);
+			// Check if this custom event is referenced
+			bool bIsReferenced = LocalReferencedFunctions.Contains(EventName) || ReferencedFunctions.Contains(EventName);
 
-				if (!bIsReferenced)
-				{
-					// Also check for direct event calls by GUID
-					bIsReferenced = LocalReferencedCustomEvents.Contains(EventNode->NodeGuid);
-				}
+			if (!bIsReferenced)
+			{
+				// Also check for direct event calls by GUID
+				bIsReferenced = LocalReferencedCustomEvents.Contains(EventNode->NodeGuid);
+			}
 
-				if (!bIsReferenced)
-				{
-					FLintIssue Issue;
-					Issue.Type = ELintIssueType::DeadNode;
-					Issue.BlueprintPath = Blueprint->GetPathName();
-					Issue.NodeName = EventName.ToString();
-					Issue.Description = FString::Printf(TEXT("自定义事件 '%s' 已定义但从未被调用"), *Issue.NodeName);
-					Issue.Severity = ESeverity::Low; // 未调用的事件不一定严重
-					Issue.NodeGuid = EventNode->NodeGuid;
+			if (!bIsReferenced)
+			{
+				FLintIssue Issue;
+				Issue.Type = ELintIssueType::DeadNode;
+				Issue.BlueprintPath = Blueprint->GetPathName();
+				Issue.NodeName = EventName.ToString();
+				Issue.Description = FString::Printf(TEXT("自定义事件 '%s' 已定义但从未被调用"), *Issue.NodeName);
+				Issue.Severity = ESeverity::Low; // 未调用的事件不一定严重
+				Issue.NodeGuid = EventNode->NodeGuid;
 
-					OutIssues.Add(Issue);
-				}
+				OutIssues.Add(Issue);
 			}
 		}
+	}
 	}
 
 	// Check for unreferenced blueprint variables
@@ -302,7 +308,7 @@ void FStaticLinter::DetectOrphanNodes(UBlueprint* Blueprint, TArray<FLintIssue>&
 			}
 
 			// Skip Event nodes - they're entry points and don't need to be connected
-			if (Node->IsA<UK2Node_Event>() || Node->IsA<UK2Node_CustomEvent>())
+			if (Node->IsA<UK2Node_Event>() || Node->IsA<UK2Node_CustomEvent>() || Node->IsA<UK2Node_ComponentBoundEvent>())
 			{
 				continue;
 			}
@@ -339,11 +345,10 @@ void FStaticLinter::DetectOrphanNodes(UBlueprint* Blueprint, TArray<FLintIssue>&
 						continue;
 					}
 
-					// 3. 工具节点（Make, Select, Branch 等）
+					// 3. 跳过纯工具节点（Make, Select, Append 等）
+					// 注意：Branch 和 Break 可能有执行引脚，不在此处跳过，让后面的逻辑处理
 					if (NodeTitle.Contains(TEXT("Make")) ||
 						NodeTitle.Contains(TEXT("Select")) ||
-						NodeTitle.Contains(TEXT("Branch")) ||
-						NodeTitle.Contains(TEXT("Break")) ||
 						NodeTitle.Contains(TEXT("Append")))
 					{
 						continue;
@@ -402,8 +407,9 @@ void FStaticLinter::DetectOrphanNodes(UBlueprint* Blueprint, TArray<FLintIssue>&
 					FString NodeTitle = Node->GetNodeTitle(ENodeTitleType::ListView).ToString();
 					bool bShouldSkip = false;
 
-					// 1. 跳过 Event、CustomEvent 和 FunctionEntry（入口节点）
-					if (Node->IsA<UK2Node_Event>() || Node->IsA<UK2Node_CustomEvent>() || Node->IsA<UK2Node_FunctionEntry>())
+					// 1. 跳过 Event、CustomEvent、FunctionEntry 和 ComponentBoundEvent（入口节点）
+					if (Node->IsA<UK2Node_Event>() || Node->IsA<UK2Node_CustomEvent>() || 
+					    Node->IsA<UK2Node_FunctionEntry>() || Node->IsA<UK2Node_ComponentBoundEvent>())
 					{
 						bShouldSkip = true;
 					}

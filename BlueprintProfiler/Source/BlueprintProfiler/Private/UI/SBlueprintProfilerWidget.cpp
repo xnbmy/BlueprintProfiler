@@ -89,11 +89,11 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 		.Padding(4.0f)
 		[
 			SNew(SSplitter)
-			.Orientation(Orient_Vertical)
+			.Orientation(Orient_Horizontal)
 			
-			// Control Panel
+			// Control Panel (Left Side)
 			+ SSplitter::Slot()
-			.Value(0.3f)
+			.Value(0.25f)
 			[
 				SNew(SBorder)
 				.BorderImage(FAppStyle::GetBrush("DetailsView.CategoryTop"))
@@ -104,10 +104,55 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 					[
 						SNew(SVerticalBox)
 						
-						// Runtime Profiler Controls
+						// Status and Progress Display (放在最上面，确保可见)
 						+ SVerticalBox::Slot()
 						.AutoHeight()
 						.Padding(0, 4)
+						[
+							SNew(STextBlock)
+							.Text(LOCTEXT("StatusSectionTitle", "状态"))
+							.Font(FAppStyle::GetFontStyle("DetailsView.CategoryFontStyle"))
+						]
+						
+						+ SVerticalBox::Slot()
+						.AutoHeight()
+						.Padding(0, 2)
+						[
+							SAssignNew(StatusText, STextBlock)
+							.Text(LOCTEXT("StatusReady", "就绪"))
+						]
+						
+						+ SVerticalBox::Slot()
+						.AutoHeight()
+						.Padding(0, 2)
+						[
+							SAssignNew(ProgressDetailsText, STextBlock)
+							.Text(FText::GetEmpty())
+							.Visibility(EVisibility::Collapsed)
+						]
+						
+						+ SVerticalBox::Slot()
+						.AutoHeight()
+						.Padding(0, 2)
+						[
+							SAssignNew(TimeRemainingText, STextBlock)
+							.Text(FText::GetEmpty())
+							.Visibility(EVisibility::Collapsed)
+						]
+						
+						+ SVerticalBox::Slot()
+						.AutoHeight()
+						.Padding(0, 2)
+						[
+							SAssignNew(ProgressBar, SProgressBar)
+							.Percent(0.0f)
+							.Visibility(EVisibility::Collapsed)
+						]
+						
+						// Runtime Profiler Controls
+						+ SVerticalBox::Slot()
+						.AutoHeight()
+						.Padding(0, 8, 0, 4)
 						[
 							SNew(STextBlock)
 							.Text(LOCTEXT("RuntimeProfilerTitle", "运行时分析器"))
@@ -352,51 +397,6 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 							.Text(LOCTEXT("StartMemoryAnalysis", "分析内存"))
 							.OnClicked(this, &SBlueprintProfilerWidget::OnStartMemoryAnalysis)
 							.IsEnabled(this, &SBlueprintProfilerWidget::CanStartMemoryAnalysis)
-						]
-						
-						// Status and Progress
-						+ SVerticalBox::Slot()
-						.AutoHeight()
-						.Padding(0, 8, 0, 4)
-						[
-							SNew(STextBlock)
-							.Text(LOCTEXT("StatusTitle", "状态"))
-							.Font(FAppStyle::GetFontStyle("DetailsView.CategoryFontStyle"))
-						]
-						
-						+ SVerticalBox::Slot()
-						.AutoHeight()
-						.Padding(0, 2)
-						[
-							SAssignNew(StatusText, STextBlock)
-							.Text(LOCTEXT("StatusReady", "就绪"))
-						]
-						
-						+ SVerticalBox::Slot()
-						.AutoHeight()
-						.Padding(0, 2)
-						[
-							SAssignNew(ProgressDetailsText, STextBlock)
-							.Text(FText::GetEmpty())
-							.Visibility(EVisibility::Collapsed)
-						]
-						
-						+ SVerticalBox::Slot()
-						.AutoHeight()
-						.Padding(0, 2)
-						[
-							SAssignNew(TimeRemainingText, STextBlock)
-							.Text(FText::GetEmpty())
-							.Visibility(EVisibility::Collapsed)
-						]
-						
-						+ SVerticalBox::Slot()
-						.AutoHeight()
-						.Padding(0, 2)
-						[
-							SAssignNew(ProgressBar, SProgressBar)
-							.Percent(0.0f)
-							.Visibility(EVisibility::Collapsed)
 						]
 						
 						// Export Controls
