@@ -4,6 +4,7 @@
 #include "Data/ProfilerDataTypes.h"
 #include "Engine/Blueprint.h"
 #include "AssetRegistry/AssetData.h"
+#include "Async/AsyncWork.h"
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnScanComplete, const TArray<FLintIssue>& /* Issues */);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnScanProgress, int32 /* ProcessedAssets */, int32 /* TotalAssets */);
@@ -120,4 +121,29 @@ private:
 
 	// Self-reference to keep object alive during async operations
 	TSharedPtr<FStaticLinter> SelfReference;
+
+	// Static members for cross-blueprint reference tracking
+	static TSet<FName> ReferencedFunctions;
+	static TMap<FName, int32> FunctionCallCount;
+};
+
+/**
+ * Async task for blueprint scanning
+ */
+class FScanTask : public FNonAbandonableTask
+{
+public:
+	FScanTask(TSharedPtr<FStaticLinter> InLinter, const TArray<FAssetData>& InAssets, const FScanConfiguration& InConfig);
+
+	void DoWork();
+
+	FORCEINLINE TStatId GetStatId() const
+	{
+		RETURN_QUICK_DECLARE_CYCLE_STAT(FScanTask, STATGROUP_ThreadPoolAsyncTasks);
+	}
+
+private:
+	TWeakPtr<FStaticLinter> LinterWeak;
+	TArray<FAssetData> Assets;
+	FScanConfiguration Config;
 };
