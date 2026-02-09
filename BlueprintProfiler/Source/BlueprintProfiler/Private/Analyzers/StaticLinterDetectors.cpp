@@ -24,6 +24,7 @@
 #include "Engine/GameInstance.h"
 #include "GameFramework/Actor.h"
 #include "Components/ActorComponent.h"
+#include "Kismet2/BlueprintEditorUtils.h"
 
 // 存储跨蓝图引用的函数
 TSet<FName> FStaticLinter::ReferencedFunctions;
@@ -674,14 +675,23 @@ void FStaticLinter::DetectUnusedFunctions(UBlueprint* Blueprint, TArray<FLintIss
 			for (UEdGraphNode* Node : Graph->Nodes)
 			{
 				if (UK2Node_CallFunction* CallFuncNode = Cast<UK2Node_CallFunction>(Node))
-				{
-					FName FunctionName = CallFuncNode->FunctionReference.GetMemberName();
-					if (FunctionName != NAME_None)
 					{
-						ReferencedFunctions.Add(FunctionName);
-						FunctionCallCount.FindOrAdd(FunctionName)++;
+						FName FunctionName = CallFuncNode->FunctionReference.GetMemberName();
+						if (FunctionName != NAME_None)
+						{
+							ReferencedFunctions.Add(FunctionName);
+							FunctionCallCount.FindOrAdd(FunctionName)++;
+						}
+						
+						// 也记录函数引用的完整路径（包含类名），用于跨蓝图引用检测
+						FString FullFunctionPath = CallFuncNode->FunctionReference.GetMemberParentClass() ? 
+							CallFuncNode->FunctionReference.GetMemberParentClass()->GetName() + TEXT(".") + FunctionName.ToString() :
+							FunctionName.ToString();
+						if (!FullFunctionPath.IsEmpty())
+						{
+							ReferencedFunctions.Add(FName(*FullFunctionPath));
+						}
 					}
-				}
 				// 也检查自定义事件调用
 				else if (UK2Node_CustomEvent* CustomEventNode = Cast<UK2Node_CustomEvent>(Node))
 				{
@@ -840,69 +850,9 @@ void FStaticLinter::DetectUnusedFunctions(UBlueprint* Blueprint, TArray<FLintIss
 			}
 		}
 
-		// 6. 检查函数是否被引用
-		bool bIsReferenced = false;
-
-		// 直接检查函数名是否在引用列表中
-		if (ReferencedFunctions.Contains(FunctionName))
-		{
-			bIsReferenced = true;
-		}
-
-		// 7. 更全面的跨蓝图引用检查
-		if (!bIsReferenced)
-		{
-			// 遍历所有其他 Blueprint，检查是否有对这个函数的引用
-			for (const FAssetData& AssetData : AllBlueprintAssets)
-			{
-				UBlueprint* BP = Cast<UBlueprint>(AssetData.GetAsset());
-				if (!BP || BP == Blueprint)
-				{
-					continue;  // 跳过自己
-				}
-
-				// 检查这个 Blueprint 是否引用了当前函数
-				for (UEdGraph* Graph : GetAllGraphs(BP))
-				{
-					if (!Graph)
-					{
-						continue;
-					}
-
-					for (UEdGraphNode* Node : Graph->Nodes)
-					{
-						if (UK2Node_CallFunction* CallFuncNode = Cast<UK2Node_CallFunction>(Node))
-						{
-							// 检查函数引用
-							FName CalledFunctionName = CallFuncNode->FunctionReference.GetMemberName();
-							if (CalledFunctionName == FunctionName)
-							{
-								bIsReferenced = true;
-								break;
-							}
-
-							// 检查函数引用的完整路径
-							FString FunctionPath = CallFuncNode->FunctionReference.GetMemberName().ToString();
-							if (FunctionPath.Contains(FunctionNameStr))
-							{
-								bIsReferenced = true;
-								break;
-							}
-						}
-					}
-
-					if (bIsReferenced)
-					{
-						break;
-					}
-				}
-
-				if (bIsReferenced)
-				{
-					break;
-				}
-			}
-		}
+		// 6. 使用虚幻引擎原生的引用检测机制检查函数是否被引用
+		// FBlueprintEditorUtils::IsFunctionUsed 会自动搜索当前蓝图和所有引用该蓝图的其他蓝图
+		bool bIsReferenced = FBlueprintEditorUtils::IsFunctionUsed(Blueprint, FunctionName);
 
 		// 调试：输出未引用的函数名
 		if (!bIsReferenced)
