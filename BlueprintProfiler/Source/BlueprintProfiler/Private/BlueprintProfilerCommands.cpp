@@ -1,10 +1,10 @@
 #include "BlueprintProfilerCommands.h"
 
-#define LOCTEXT_NAMESPACE "FBlueprintProfilerModule"
+#define LOCTEXT_NAMESPACE "BlueprintProfiler"
 
 void FBlueprintProfilerCommands::RegisterCommands()
 {
-	UI_COMMAND(OpenPluginWindow, "蓝图分析器", "打开蓝图分析器窗口", EUserInterfaceActionType::Button, FInputChord());
+	UI_COMMAND(OpenPluginWindow, "Blueprint Profiler", "Open Blueprint Profiler window", EUserInterfaceActionType::Button, FInputChord());
 }
 
 #undef LOCTEXT_NAMESPACE

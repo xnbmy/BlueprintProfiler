@@ -1,0 +1,334 @@
+# Blueprint Profiler Localization - English
+# This file contains all UI text translations for the Blueprint Profiler plugin.
+
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Project-Id-Version: BlueprintProfiler 1.0\n"
+"Language: en\n"
+
+# Section Titles
+msgid "StatusSectionTitle"
+msgstr "Status"
+
+msgid "RuntimeProfilerTitle"
+msgstr "Runtime Profiler"
+
+msgid "PIEIntegrationTitle"
+msgstr "PIE Integration"
+
+msgid "StaticLinterTitle"
+msgstr "Static Analysis"
+
+msgid "MemoryAnalyzerTitle"
+msgstr "Reference Analyzer"
+
+msgid "ExportTitle"
+msgstr "Export"
+
+# Recording Controls
+msgid "StartRecording"
+msgstr "Start"
+
+msgid "PauseRecording"
+msgstr "Pause"
+
+msgid "ResumeRecording"
+msgstr "Resume"
+
+msgid "StopRecording"
+msgstr "Stop"
+
+msgid "ResetData"
+msgstr "Reset"
+
+# Session Management
+msgid "SaveSession"
+msgstr "Save Session"
+
+msgid "SaveSessionTooltip"
+msgstr "Save current session data to file"
+
+msgid "LoadSession"
+msgstr "Load Session"
+
+msgid "LoadSessionTooltip"
+msgstr "Load session data from file"
+
+# PIE Integration
+msgid "AutoStartPIE"
+msgstr "Auto-start recording on PIE"
+
+msgid "AutoStartPIETooltip"
+msgstr "Automatically start recording when editor begins playback"
+
+msgid "AutoStopPIE"
+msgstr "Auto-stop recording on PIE end"
+
+msgid "AutoStopPIETooltip"
+msgstr "Automatically stop recording when editor ends playback"
+
+# Static Linter
+msgid "StartScan"
+msgstr "Scan Project"
+
+msgid "ScanFolders"
+msgstr "Scan Folders"
+
+msgid "CancelScan"
+msgstr "Cancel Scan"
+
+# Memory Analyzer
+msgid "StartMemoryAnalysis"
+msgstr "Analyze References"
+
+# Export Options
+msgid "ExportCSV"
+msgstr "Export CSV"
+
+msgid "ExportJSON"
+msgstr "Export JSON"
+
+# Search and Filter
+msgid "SearchHint"
+msgstr "Search nodes, blueprints, categories..."
+
+msgid "ClearFilters"
+msgstr "Clear"
+
+msgid "ClearFiltersTooltip"
+msgstr "Clear all search and filter conditions"
+
+msgid "ClearData"
+msgstr "Clear Data"
+
+msgid "ClearDataTooltip"
+msgstr "Clear all displayed data (runtime data and static scan data)"
+
+# Sort and Filter Options
+msgid "SortBy"
+msgstr "Sort:"
+
+msgid "SortByExecution"
+msgstr "Execution Frequency"
+
+msgid "SortByMemory"
+msgstr "Memory Usage"
+
+msgid "FilterBy"
+msgstr "Filter:"
+
+msgid "FilterAll"
+msgstr "All"
+
+msgid "FilterRuntime"
+msgstr "Runtime"
+
+msgid "FilterLint"
+msgstr "Code Check"
+
+msgid "FilterMemory"
+msgstr "Memory"
+
+msgid "FilterHotspots"
+msgstr "Hotspot Nodes"
+
+msgid "FilterDeadCode"
+msgstr "Dead Code"
+
+msgid "FilterPerformance"
+msgstr "Performance Issues"
+
+# Severity Filters
+msgid "SeverityCritical"
+msgstr "Critical"
+
+msgid "SeverityHigh"
+msgstr "High"
+
+msgid "SeverityMedium"
+msgstr "Medium"
+
+msgid "SeverityLow"
+msgstr "Low"
+
+# Quick Filters
+msgid "QuickFilterCritical"
+msgstr "Critical"
+
+msgid "QuickFilterCriticalTooltip"
+msgstr "Show only critical severity items"
+
+msgid "QuickFilterRuntime"
+msgstr "Runtime"
+
+msgid "QuickFilterRuntimeTooltip"
+msgstr "Show only runtime performance data"
+
+msgid "QuickFilterLint"
+msgstr "Code Check"
+
+msgid "QuickFilterLintTooltip"
+msgstr "Show only static analysis issues"
+
+msgid "QuickFilterMemory"
+msgstr "Memory"
+
+msgid "QuickFilterMemoryTooltip"
+msgstr "Show only memory analysis data"
+
+# View Options
+msgid "HideEngineNodes"
+msgstr "Hide Engine Internal Nodes"
+
+msgid "HideEngineNodesTooltip"
+msgstr "Filter out engine built-in macro node internals (like For Loop, While Loop, etc.) and only show your own business logic"
+
+# Column Headers
+msgid "TypeColumn"
+msgstr "Type"
+
+msgid "NameColumn"
+msgstr "Name"
+
+msgid "BlueprintColumn"
+msgstr "Blueprint"
+
+msgid "CategoryColumn"
+msgstr "Category"
+
+msgid "ValueColumn"
+msgstr "Value"
+
+msgid "SeverityColumn"
+msgstr "Severity"
+
+# Status Messages
+msgid "StatusReady"
+msgstr "Ready"
+
+msgid "StatusRecording"
+msgstr "Recording runtime data - Session: {0}"
+
+msgid "StatusRecordingStopped"
+msgstr "Recording stopped - Session: {0} (Duration: {1}s, Nodes: {2})"
+
+msgid "StatusRecordingPaused"
+msgstr "Recording paused"
+
+msgid "StatusRecordingResumed"
+msgstr "Recording resumed"
+
+msgid "StatusDataReset"
+msgstr "Runtime data reset"
+
+msgid "StatusAnalyzingRefs"
+msgstr "Analyzing asset reference relationships..."
+
+msgid "StatusAnalyzingRefsProgress"
+msgstr "Analyzing asset reference relationships... {0}%"
+
+msgid "StatusRefCountComplete"
+msgstr "Reference analysis complete. Found {0} referenced assets, showing top {1}."
+
+# Navigation
+msgid "NavigationSection"
+msgstr "Navigation"
+
+msgid "NavigateToBlueprint"
+msgstr "Navigate to Blueprint"
+
+msgid "NavigateToBlueprintTooltip"
+msgstr "Open blueprint in blueprint editor"
+
+msgid "NavigateToNode"
+msgstr "Navigate to Node"
+
+msgid "NavigateToNodeTooltip"
+msgstr "Locate the specific node in blueprint editor"
+
+msgid "NavigateToAsset"
+msgstr "Navigate to Asset"
+
+msgid "NavigateToAssetTooltip"
+msgstr "Open asset in editor"
+
+msgid "StatusAssetNavigated"
+msgstr "Navigated to asset '{0}' in content browser"
+
+msgid "StatusAssetNotFound"
+msgstr "Could not find asset '{0}'"
+
+msgid "StatusBlueprintNavigated"
+msgstr "Navigated to blueprint '{0}' in content browser"
+
+msgid "StatusBlueprintNotFound"
+msgstr "Could not find blueprint '{0}'"
+
+msgid "StatusNodeNavigated"
+msgstr "Navigated to node '{0}' in blueprint '{1}'"
+
+msgid "StatusNodeNotFound"
+msgstr "Could not find node '{0}'"
+
+# Session Save/Load
+msgid "SaveSessionDialogTitle"
+msgstr "Save Session Data"
+
+msgid "StatusSessionSaved"
+msgstr "Session data saved to: {0}"
+
+msgid "LoadSessionDialogTitle"
+msgstr "Select Session Data File to Load"
+
+msgid "StatusSessionLoaded"
+msgstr "Session data loaded successfully from {0}"
+
+msgid "StatusSessionLoadFailed"
+msgstr "Failed to load session data"
+
+msgid "StatusHistoryCleared"
+msgstr "Session history cleared"
+
+# Show All
+msgid "StatusShowingAll"
+msgstr "Showing all {0} items"
+
+# Reference Count
+msgid "RefCountCategory"
+msgstr "Referenced {0} times"
+
+msgid "RefCountDesc"
+msgstr "Type: {0}, Size: {1} MB, Referenced by {2} assets"
+
+# Menu and Tab
+msgid "BlueprintProfilerTabTitle"
+msgstr "Blueprint Profiler"
+
+msgid "OpenPluginWindow"
+msgstr "Blueprint Profiler"
+
+# Additional Status Messages
+msgid "StatusScanning"
+msgstr "Scanning blueprints..."
+
+msgid "FolderSelectTitle"
+msgstr "Select Blueprint Folder to Scan"
+
+msgid "StatusScanningFolders"
+msgstr "Scanning folder: {0}"
+
+msgid "StatusInvalidFolder"
+msgstr "Selected folder is not in the project Content directory"
+
+msgid "StatusScanCancelled"
+msgstr "Scan cancelled - partial results retained"
+
+msgid "StatusExportSuccess"
+msgstr "Exported {0} items to {1}"
+
+msgid "StatusExportFailed"
+msgstr "Failed to save export file"
+
+msgid "StatusCleared"
+msgstr "Data cleared"

@@ -1,0 +1,334 @@
+# Blueprint Profiler Localization - Simplified Chinese
+# This file contains all UI text translations for the Blueprint Profiler plugin.
+
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Project-Id-Version: BlueprintProfiler 1.0\n"
+"Language: zh-Hans\n"
+
+# Section Titles
+msgid "StatusSectionTitle"
+msgstr "状态"
+
+msgid "RuntimeProfilerTitle"
+msgstr "运行时分析器"
+
+msgid "PIEIntegrationTitle"
+msgstr "PIE 集成"
+
+msgid "StaticLinterTitle"
+msgstr "静态分析"
+
+msgid "MemoryAnalyzerTitle"
+msgstr "引用分析器"
+
+msgid "ExportTitle"
+msgstr "导出"
+
+# Recording Controls
+msgid "StartRecording"
+msgstr "开始"
+
+msgid "PauseRecording"
+msgstr "暂停"
+
+msgid "ResumeRecording"
+msgstr "继续"
+
+msgid "StopRecording"
+msgstr "停止"
+
+msgid "ResetData"
+msgstr "重置"
+
+# Session Management
+msgid "SaveSession"
+msgstr "保存会话"
+
+msgid "SaveSessionTooltip"
+msgstr "保存当前会话数据到文件"
+
+msgid "LoadSession"
+msgstr "加载会话"
+
+msgid "LoadSessionTooltip"
+msgstr "从文件加载会话数据"
+
+# PIE Integration
+msgid "AutoStartPIE"
+msgstr "PIE 时自动开始录制"
+
+msgid "AutoStartPIETooltip"
+msgstr "在编辑器中开始播放时自动开始录制"
+
+msgid "AutoStopPIE"
+msgstr "PIE 结束时自动停止录制"
+
+msgid "AutoStopPIETooltip"
+msgstr "在编辑器中结束播放时自动停止录制"
+
+# Static Linter
+msgid "StartScan"
+msgstr "扫描项目"
+
+msgid "ScanFolders"
+msgstr "扫描文件夹"
+
+msgid "CancelScan"
+msgstr "取消扫描"
+
+# Memory Analyzer
+msgid "StartMemoryAnalysis"
+msgstr "分析引用"
+
+# Export Options
+msgid "ExportCSV"
+msgstr "导出 CSV"
+
+msgid "ExportJSON"
+msgstr "导出 JSON"
+
+# Search and Filter
+msgid "SearchHint"
+msgstr "搜索节点、蓝图、类别..."
+
+msgid "ClearFilters"
+msgstr "清除"
+
+msgid "ClearFiltersTooltip"
+msgstr "清除所有搜索和筛选条件"
+
+msgid "ClearData"
+msgstr "清除数据"
+
+msgid "ClearDataTooltip"
+msgstr "清除所有显示的数据（运行时数据和静态扫描数据）"
+
+# Sort and Filter Options
+msgid "SortBy"
+msgstr "排序："
+
+msgid "SortByExecution"
+msgstr "执行频率"
+
+msgid "SortByMemory"
+msgstr "内存使用"
+
+msgid "FilterBy"
+msgstr "筛选："
+
+msgid "FilterAll"
+msgstr "全部"
+
+msgid "FilterRuntime"
+msgstr "运行时"
+
+msgid "FilterLint"
+msgstr "代码检查"
+
+msgid "FilterMemory"
+msgstr "内存"
+
+msgid "FilterHotspots"
+msgstr "热点节点"
+
+msgid "FilterDeadCode"
+msgstr "死代码"
+
+msgid "FilterPerformance"
+msgstr "性能问题"
+
+# Severity Filters
+msgid "SeverityCritical"
+msgstr "严重"
+
+msgid "SeverityHigh"
+msgstr "高"
+
+msgid "SeverityMedium"
+msgstr "中"
+
+msgid "SeverityLow"
+msgstr "低"
+
+# Quick Filters
+msgid "QuickFilterCritical"
+msgstr "严重"
+
+msgid "QuickFilterCriticalTooltip"
+msgstr "仅显示严重级别的项目"
+
+msgid "QuickFilterRuntime"
+msgstr "运行时"
+
+msgid "QuickFilterRuntimeTooltip"
+msgstr "仅显示运行时性能数据"
+
+msgid "QuickFilterLint"
+msgstr "代码检查"
+
+msgid "QuickFilterLintTooltip"
+msgstr "仅显示静态分析问题"
+
+msgid "QuickFilterMemory"
+msgstr "内存"
+
+msgid "QuickFilterMemoryTooltip"
+msgstr "仅显示内存分析数据"
+
+# View Options
+msgid "HideEngineNodes"
+msgstr "隐藏引擎内部节点"
+
+msgid "HideEngineNodesTooltip"
+msgstr "过滤掉引擎内置宏节点（如For Loop、While Loop等）的内部实现，只显示你自己的业务逻辑"
+
+# Column Headers
+msgid "TypeColumn"
+msgstr "类型"
+
+msgid "NameColumn"
+msgstr "名称"
+
+msgid "BlueprintColumn"
+msgstr "蓝图"
+
+msgid "CategoryColumn"
+msgstr "类别"
+
+msgid "ValueColumn"
+msgstr "值"
+
+msgid "SeverityColumn"
+msgstr "严重程度"
+
+# Status Messages
+msgid "StatusReady"
+msgstr "就绪"
+
+msgid "StatusRecording"
+msgstr "正在录制运行时数据 - 会话：{0}"
+
+msgid "StatusRecordingStopped"
+msgstr "录制已停止 - 会话：{0}（时长：{1}秒，节点：{2}）"
+
+msgid "StatusRecordingPaused"
+msgstr "录制已暂停"
+
+msgid "StatusRecordingResumed"
+msgstr "录制已继续"
+
+msgid "StatusDataReset"
+msgstr "运行时数据已重置"
+
+msgid "StatusAnalyzingRefs"
+msgstr "正在分析资产引用关系..."
+
+msgid "StatusAnalyzingRefsProgress"
+msgstr "正在分析资产引用关系... {0}%"
+
+msgid "StatusRefCountComplete"
+msgstr "引用分析完成。发现 {0} 个被引用的资产，显示前 {1} 个。"
+
+# Navigation
+msgid "NavigationSection"
+msgstr "导航"
+
+msgid "NavigateToBlueprint"
+msgstr "导航到蓝图"
+
+msgid "NavigateToBlueprintTooltip"
+msgstr "在蓝图编辑器中打开蓝图"
+
+msgid "NavigateToNode"
+msgstr "导航到节点"
+
+msgid "NavigateToNodeTooltip"
+msgstr "在蓝图编辑器中定位到具体节点"
+
+msgid "NavigateToAsset"
+msgstr "导航到资产"
+
+msgid "NavigateToAssetTooltip"
+msgstr "在编辑器中打开资产"
+
+msgid "StatusAssetNavigated"
+msgstr "已在内容浏览器中导航到资产 '{0}'"
+
+msgid "StatusAssetNotFound"
+msgstr "无法找到资产 '{0}'"
+
+msgid "StatusBlueprintNavigated"
+msgstr "已在内容浏览器中导航到蓝图 '{0}'"
+
+msgid "StatusBlueprintNotFound"
+msgstr "无法找到蓝图 '{0}'"
+
+msgid "StatusNodeNavigated"
+msgstr "已在蓝图 '{1}' 中导航到节点 '{0}'"
+
+msgid "StatusNodeNotFound"
+msgstr "无法找到节点 '{0}'"
+
+# Session Save/Load
+msgid "SaveSessionDialogTitle"
+msgstr "保存会话数据"
+
+msgid "StatusSessionSaved"
+msgstr "会话数据已保存到：{0}"
+
+msgid "LoadSessionDialogTitle"
+msgstr "选择要加载的会话数据文件"
+
+msgid "StatusSessionLoaded"
+msgstr "会话数据已从 {0} 加载成功"
+
+msgid "StatusSessionLoadFailed"
+msgstr "加载会话数据失败"
+
+msgid "StatusHistoryCleared"
+msgstr "会话历史已清除"
+
+# Show All
+msgid "StatusShowingAll"
+msgstr "显示所有 {0} 个项目"
+
+# Reference Count
+msgid "RefCountCategory"
+msgstr "被引用 {0} 次"
+
+msgid "RefCountDesc"
+msgstr "类型: {0}, 大小: {1} MB, 被 {2} 个资产引用"
+
+# Menu and Tab
+msgid "BlueprintProfilerTabTitle"
+msgstr "蓝图分析器"
+
+msgid "OpenPluginWindow"
+msgstr "蓝图分析器"
+
+# Additional Status Messages
+msgid "StatusScanning"
+msgstr "正在扫描蓝图..."
+
+msgid "FolderSelectTitle"
+msgstr "选择要扫描的蓝图文件夹"
+
+msgid "StatusScanningFolders"
+msgstr "正在扫描文件夹: {0}"
+
+msgid "StatusInvalidFolder"
+msgstr "所选文件夹不在项目 Content 目录中"
+
+msgid "StatusScanCancelled"
+msgstr "扫描已取消 - 保留了部分结果"
+
+msgid "StatusExportSuccess"
+msgstr "已导出 {0} 个项目到 {1}"
+
+msgid "StatusExportFailed"
+msgstr "保存导出文件失败"
+
+msgid "StatusCleared"
+msgstr "数据已清除"

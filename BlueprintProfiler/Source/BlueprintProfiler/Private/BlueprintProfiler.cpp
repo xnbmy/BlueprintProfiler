@@ -1,6 +1,7 @@
 #include "BlueprintProfiler.h"
 #include "BlueprintProfilerStyle.h"
 #include "BlueprintProfilerCommands.h"
+#include "BlueprintProfilerLocalization.h"
 #include "UI/SBlueprintProfilerWidget.h"
 #include "LevelEditor.h"
 #include "Widgets/Docking/SDockTab.h"
@@ -10,7 +11,7 @@
 
 static const FName BlueprintProfilerTabName("BlueprintProfiler");
 
-#define LOCTEXT_NAMESPACE "FBlueprintProfilerModule"
+#define LOCTEXT_NAMESPACE "BlueprintProfiler"
 
 void FBlueprintProfilerModule::StartupModule()
 {
@@ -30,8 +31,11 @@ void FBlueprintProfilerModule::StartupModule()
 
 	UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FBlueprintProfilerModule::RegisterMenus));
 	
+	FText TabTitle = FBlueprintProfilerLocalization::IsChinese() ?
+		FText::FromString(TEXT("蓝图分析器")) :
+		FText::FromString(TEXT("Blueprint Profiler"));
 	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(BlueprintProfilerTabName, FOnSpawnTab::CreateRaw(this, &FBlueprintProfilerModule::OnSpawnPluginTab))
-		.SetDisplayName(LOCTEXT("FBlueprintProfilerTabTitle", "蓝图分析器"))
+		.SetDisplayName(TabTitle)
 		.SetMenuType(ETabSpawnerMenuType::Hidden);
 }
 
@@ -71,11 +75,28 @@ void FBlueprintProfilerModule::RegisterMenus()
 	// Owner will be used for cleanup in call to UToolMenus::UnregisterOwner
 	FToolMenuOwnerScoped OwnerScoped(this);
 
+	// Get localized menu text
+	FText MenuLabel = FBlueprintProfilerLocalization::IsChinese() ? 
+		FText::FromString(TEXT("蓝图分析器")) : 
+		FText::FromString(TEXT("Blueprint Profiler"));
+	FText MenuTooltip = FBlueprintProfilerLocalization::IsChinese() ? 
+		FText::FromString(TEXT("打开蓝图分析器窗口")) : 
+		FText::FromString(TEXT("Open Blueprint Profiler window"));
+
 	{
 		UToolMenu* Menu = UToolMenus::Get()->ExtendMenu("LevelEditor.MainMenu.Window");
 		{
 			FToolMenuSection& Section = Menu->FindOrAddSection("WindowLayout");
-			Section.AddMenuEntryWithCommandList(FBlueprintProfilerCommands::Get().OpenPluginWindow, PluginCommands);
+			FToolMenuEntry& Entry = Section.AddEntry(FToolMenuEntry::InitMenuEntry(
+				FName("BlueprintProfiler"),
+				MenuLabel,
+				MenuTooltip,
+				FSlateIcon(FBlueprintProfilerStyle::GetStyleSetName(), "BlueprintProfiler.PluginAction"),
+				FUIAction(
+					FExecuteAction::CreateRaw(this, &FBlueprintProfilerModule::PluginButtonClicked),
+					FCanExecuteAction()
+				)
+			));
 		}
 	}
 
@@ -84,7 +105,11 @@ void FBlueprintProfilerModule::RegisterMenus()
 		{
 			FToolMenuSection& Section = ToolbarMenu->FindOrAddSection("Settings");
 			{
-				FToolMenuEntry& Entry = Section.AddEntry(FToolMenuEntry::InitToolBarButton(FBlueprintProfilerCommands::Get().OpenPluginWindow));
+				FToolMenuEntry& Entry = Section.AddEntry(FToolMenuEntry::InitToolBarButton(
+					FBlueprintProfilerCommands::Get().OpenPluginWindow,
+					MenuLabel,
+					MenuTooltip
+				));
 				Entry.SetCommandList(PluginCommands);
 			}
 		}

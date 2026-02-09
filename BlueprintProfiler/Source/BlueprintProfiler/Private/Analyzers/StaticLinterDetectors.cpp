@@ -1,4 +1,5 @@
 #include "Analyzers/StaticLinter.h"
+#include "BlueprintProfilerLocalization.h"
 #include "Engine/Blueprint.h"
 #include "K2Node.h"
 #include "K2Node_Event.h"
@@ -172,7 +173,14 @@ void FStaticLinter::DetectDeadNodes(UBlueprint* Blueprint, TArray<FLintIssue>& O
 					Issue.Type = ELintIssueType::DeadNode;
 					Issue.BlueprintPath = Blueprint->GetPathName();
 					Issue.NodeName = VarGetNode->VariableReference.GetMemberName().ToString();
-					Issue.Description = FString::Printf(TEXT("Variable '%s' is retrieved but never used"), *Issue.NodeName);
+					if (FBlueprintProfilerLocalization::IsChinese())
+					{
+						Issue.Description = FString::Printf(TEXT("变量 '%s' 被获取但从未使用"), *Issue.NodeName);
+					}
+					else
+					{
+						Issue.Description = FString::Printf(TEXT("Variable '%s' is retrieved but never used"), *Issue.NodeName);
+					}
 					Issue.Severity = CalculateIssueSeverity(ELintIssueType::DeadNode);
 					Issue.NodeGuid = VarGetNode->NodeGuid;
 					
@@ -215,8 +223,15 @@ void FStaticLinter::DetectDeadNodes(UBlueprint* Blueprint, TArray<FLintIssue>& O
 				Issue.Type = ELintIssueType::DeadNode;
 				Issue.BlueprintPath = Blueprint->GetPathName();
 				Issue.NodeName = EventName.ToString();
+			if (FBlueprintProfilerLocalization::IsChinese())
+			{
 				Issue.Description = FString::Printf(TEXT("自定义事件 '%s' 已定义但从未被调用"), *Issue.NodeName);
-				Issue.Severity = ESeverity::Low; // 未调用的事件不一定严重
+			}
+			else
+			{
+				Issue.Description = FString::Printf(TEXT("Custom event '%s' is defined but never called"), *Issue.NodeName);
+			}
+			Issue.Severity = ESeverity::Low; // 未调用的事件不一定严重
 				Issue.NodeGuid = EventNode->NodeGuid;
 
 				OutIssues.Add(Issue);
@@ -241,7 +256,14 @@ void FStaticLinter::DetectDeadNodes(UBlueprint* Blueprint, TArray<FLintIssue>& O
 			Issue.Type = ELintIssueType::DeadNode;
 			Issue.BlueprintPath = Blueprint->GetPathName();
 			Issue.NodeName = Variable.VarName.ToString();
-			Issue.Description = FString::Printf(TEXT("Blueprint variable '%s' is declared but never used"), *Issue.NodeName);
+			if (FBlueprintProfilerLocalization::IsChinese())
+			{
+				Issue.Description = FString::Printf(TEXT("蓝图变量 '%s' 已声明但从未使用"), *Issue.NodeName);
+			}
+			else
+			{
+				Issue.Description = FString::Printf(TEXT("Blueprint variable '%s' is declared but never used"), *Issue.NodeName);
+			}
 			Issue.Severity = CalculateIssueSeverity(ELintIssueType::DeadNode);
 			// Note: Variables don't have NodeGuid, so we leave it empty
 			
@@ -268,7 +290,14 @@ void FStaticLinter::DetectDeadNodes(UBlueprint* Blueprint, TArray<FLintIssue>& O
 			Issue.Type = ELintIssueType::DeadNode;
 			Issue.BlueprintPath = Blueprint->GetPathName();
 			Issue.NodeName = DispatcherName.ToString();
-			Issue.Description = FString::Printf(TEXT("Event Dispatcher '%s' is declared but never used"), *Issue.NodeName);
+			if (FBlueprintProfilerLocalization::IsChinese())
+			{
+				Issue.Description = FString::Printf(TEXT("事件分发器 '%s' 已声明但从未使用"), *Issue.NodeName);
+			}
+			else
+			{
+				Issue.Description = FString::Printf(TEXT("Event Dispatcher '%s' is declared but never used"), *Issue.NodeName);
+			}
 			Issue.Severity = ESeverity::Low; // Event dispatchers being unused is low severity
 			// Note: Event Dispatchers don't have NodeGuid, so we leave it empty
 			
@@ -329,8 +358,9 @@ void FStaticLinter::DetectOrphanNodes(UBlueprint* Blueprint, TArray<FLintIssue>&
 					FString NodeTitle = K2Node->GetNodeTitle(ENodeTitleType::ListView).ToString();
 
 					// 跳过特殊的纯节点（不需要输出连接）
-					// 1. 变更路线节点（Set Return Value）- 特殊的纯节点
+					// 1. 变更路线节点（Reroute Node）- 特殊的纯节点
 					if (NodeTitle.Contains(TEXT("变更路线")) ||
+						NodeTitle.Contains(TEXT("Reroute")) ||
 						NodeTitle.Contains(TEXT("Set Return")) ||
 						NodeTitle.Contains(TEXT("Return")) ||
 						NodeTitle.Contains(TEXT("返回")))
@@ -381,7 +411,14 @@ void FStaticLinter::DetectOrphanNodes(UBlueprint* Blueprint, TArray<FLintIssue>&
 						Issue.Type = ELintIssueType::OrphanNode;
 						Issue.BlueprintPath = Blueprint->GetPathName();
 						Issue.NodeName = NodeTitle;
-						Issue.Description = FString::Printf(TEXT("纯节点 '%s' 的输出没有连接到任何节点"), *Issue.NodeName);
+						if (FBlueprintProfilerLocalization::IsChinese())
+						{
+							Issue.Description = FString::Printf(TEXT("纯节点 '%s' 的输出没有连接到任何节点"), *Issue.NodeName);
+						}
+						else
+						{
+							Issue.Description = FString::Printf(TEXT("Pure node '%s' has no output connections"), *Issue.NodeName);
+						}
 						Issue.Severity = ESeverity::Low;
 						Issue.NodeGuid = K2Node->NodeGuid;
 
@@ -394,7 +431,14 @@ void FStaticLinter::DetectOrphanNodes(UBlueprint* Blueprint, TArray<FLintIssue>&
 						Issue.Type = ELintIssueType::OrphanNode;
 						Issue.BlueprintPath = Blueprint->GetPathName();
 						Issue.NodeName = NodeTitle;
-						Issue.Description = FString::Printf(TEXT("纯节点 '%s' 有输入但输出未连接"), *Issue.NodeName);
+						if (FBlueprintProfilerLocalization::IsChinese())
+						{
+							Issue.Description = FString::Printf(TEXT("纯节点 '%s' 有输入但输出未连接"), *Issue.NodeName);
+						}
+						else
+						{
+							Issue.Description = FString::Printf(TEXT("Pure node '%s' has inputs but no output connections"), *Issue.NodeName);
+						}
 						Issue.Severity = ESeverity::Low;
 						Issue.NodeGuid = K2Node->NodeGuid;
 
@@ -462,14 +506,21 @@ void FStaticLinter::DetectOrphanNodes(UBlueprint* Blueprint, TArray<FLintIssue>&
 						// - Event 节点（没有输入但有输出）- 已在上面跳过
 						// - 正常连接的节点（输入已连接）
 						// 会报告：
-						// - 孤立节点（输入未连接，无论输出是否连接）
+						// - Orphan node (input not connected, regardless of output connection)
 						if (bHasExecutionPins && !bHasExecInputConnected)
 						{
 							FLintIssue Issue;
 							Issue.Type = ELintIssueType::OrphanNode;
 							Issue.BlueprintPath = Blueprint->GetPathName();
 							Issue.NodeName = NodeTitle;
-							Issue.Description = FString::Printf(TEXT("执行节点 '%s' 未连接到任何执行流程（孤立节点）"), *Issue.NodeName);
+							if (FBlueprintProfilerLocalization::IsChinese())
+							{
+								Issue.Description = FString::Printf(TEXT("执行节点 '%s' 未连接到任何执行流程（孤立节点）"), *Issue.NodeName);
+							}
+							else
+							{
+								Issue.Description = FString::Printf(TEXT("Execution node '%s' is not connected to any execution flow (orphan node)"), *Issue.NodeName);
+							}
 							Issue.Severity = ESeverity::High;
 							Issue.NodeGuid = K2Node->NodeGuid;
 
@@ -871,7 +922,14 @@ void FStaticLinter::DetectUnusedFunctions(UBlueprint* Blueprint, TArray<FLintIss
 		Issue.Type = ELintIssueType::UnusedFunction;
 		Issue.BlueprintPath = Blueprint->GetPathName();
 		Issue.NodeName = FunctionNameStr;
-		Issue.Description = FString::Printf(TEXT("函数 '%s' 已定义但从未被调用"), *FunctionNameStr);
+		if (FBlueprintProfilerLocalization::IsChinese())
+		{
+			Issue.Description = FString::Printf(TEXT("函数 '%s' 已定义但从未被调用"), *FunctionNameStr);
+		}
+		else
+		{
+			Issue.Description = FString::Printf(TEXT("Function '%s' is defined but never called"), *FunctionNameStr);
+		}
 		Issue.Severity = ESeverity::Medium; // 未引用的函数是中等严重度
 		Issue.NodeGuid = FGuid(); // 函数图没有 NodeGuid，留空
 

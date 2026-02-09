@@ -1,0 +1,13 @@
+{
+	"Namespace": "BlueprintProfiler",
+	"Children": [
+		{
+			"Locale": "en",
+			"Path": "en/BlueprintProfiler.po"
+		},
+		{
+			"Locale": "zh-Hans",
+			"Path": "zh-Hans/BlueprintProfiler.po"
+		}
+	]
+}
