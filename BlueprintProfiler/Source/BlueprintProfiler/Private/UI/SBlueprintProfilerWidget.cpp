@@ -824,13 +824,41 @@ void SBlueprintProfilerWidget::SetAssetReferenceData(const TArray<FAssetReferenc
 	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
 	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
 	
+	// Use a map to deduplicate by asset name
+	TMap<FString, TSharedPtr<FProfilerDataItem>> UniqueItems;
+	
 	// Add reference count data
 	for (const FAssetReferenceCount& RefCount : AssetReferences)
 	{
+		// Get the asset name (remove _C suffix if present)
+		FString AssetName = RefCount.AssetName;
+		if (AssetName.EndsWith(TEXT("_C")))
+		{
+			AssetName = AssetName.LeftChop(2);
+		}
+		
+		// Check if we already have this asset
+		if (UniqueItems.Contains(AssetName))
+		{
+			// Update the reference count (add to existing)
+			TSharedPtr<FProfilerDataItem> ExistingItem = UniqueItems[AssetName];
+			ExistingItem->Value += RefCount.ReferenceCount;
+			int32 NewCount = (int32)ExistingItem->Value;
+			ExistingItem->Category = FString::Printf(TEXT("被引用 %d 次"), NewCount);
+			ExistingItem->Description = FString::Printf(TEXT("类型: %s, 大小: %.2f MB, 被 %d 个资产引用"),
+				*RefCount.AssetType, RefCount.AssetSize, NewCount);
+			
+			// Update severity based on combined count
+			ExistingItem->Severity = NewCount > 10 ? ESeverity::High :
+			                        (NewCount > 5 ? ESeverity::Medium : ESeverity::Low);
+			continue;
+		}
+		
 		TSharedPtr<FProfilerDataItem> Item = MakeShared<FProfilerDataItem>();
 		Item->Type = EProfilerDataType::Memory;
-		Item->Name = RefCount.AssetName;
-		Item->BlueprintName = RefCount.AssetPath;
+		
+		Item->Name = AssetName;
+		Item->BlueprintName = AssetName;
 		Item->Category = FString::Printf(TEXT("被引用 %d 次"), RefCount.ReferenceCount);
 		Item->Description = FString::Printf(TEXT("类型: %s, 大小: %.2f MB, 被 %d 个资产引用"),
 			*RefCount.AssetType, RefCount.AssetSize, RefCount.ReferenceCount);
@@ -846,7 +874,13 @@ void SBlueprintProfilerWidget::SetAssetReferenceData(const TArray<FAssetReferenc
 			Item->AssetObject = AssetData.GetAsset();
 		}
 		
-		AllDataItems.Add(Item);
+		UniqueItems.Add(AssetName, Item);
+	}
+	
+	// Add all unique items to the list
+	for (auto& Pair : UniqueItems)
+	{
+		AllDataItems.Add(Pair.Value);
 	}
 	
 	UpdateFilteredData();
@@ -1595,9 +1629,32 @@ TSharedRef<ITableRow> SBlueprintProfilerWidget::OnGenerateRow(
 
 void SBlueprintProfilerWidget::OnItemDoubleClicked(TSharedPtr<FProfilerDataItem> Item)
 {
-	if (Item.IsValid())
+	if (!Item.IsValid())
 	{
+		return;
+	}
+	
+	// Handle double-click based on item type
+	switch (Item->Type)
+	{
+	case EProfilerDataType::Runtime:
+	case EProfilerDataType::Lint:
+		// For runtime/lint types, jump to the node in blueprint
 		JumpToNode(Item);
+		break;
+		
+	case EProfilerDataType::Memory:
+		// For memory/reference types, navigate to the asset
+		NavigateToAsset(Item);
+		break;
+		
+	default:
+		// For other types, try to navigate to blueprint/asset
+		if (!Item->BlueprintName.IsEmpty())
+		{
+			NavigateToBlueprint(Item);
+		}
+		break;
 	}
 }
 
@@ -1679,7 +1736,23 @@ void SBlueprintProfilerWidget::NavigateToBlueprint(TSharedPtr<FProfilerDataItem>
 	
 	FAssetData FoundAsset;
 	
-	// Method 1: Search all assets and filter by name (most reliable)
+	// Get the asset name (remove _C suffix if present)
+	FString AssetName = Item->BlueprintName;
+	
+	UE_LOG(LogTemp, Warning, TEXT("[NavigateToBlueprint] Item->Name: '%s', Item->BlueprintName: '%s'"), 
+		*Item->Name, *Item->BlueprintName);
+	
+	if (AssetName.EndsWith(TEXT("_C")))
+	{
+		AssetName = AssetName.LeftChop(2);
+		UE_LOG(LogTemp, Warning, TEXT("[NavigateToBlueprint] Removed _C suffix, AssetName now: '%s'"), *AssetName);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[NavigateToBlueprint] No _C suffix found, using AssetName: '%s'"), *AssetName);
+	}
+	
+	// Method 1: Search all assets by name (accept any asset type)
 	{
 		TArray<FAssetData> AllAssets;
 		AssetRegistry.GetAllAssets(AllAssets);
@@ -1687,15 +1760,10 @@ void SBlueprintProfilerWidget::NavigateToBlueprint(TSharedPtr<FProfilerDataItem>
 		// First try exact match on asset name
 		for (const FAssetData& AssetData : AllAssets)
 		{
-			if (AssetData.AssetName.ToString() == Item->BlueprintName)
+			if (AssetData.AssetName.ToString() == AssetName)
 			{
-				// Check if it's a blueprint type
-				UClass* AssetClass = AssetData.GetClass();
-				if (AssetClass && AssetClass->IsChildOf(UBlueprint::StaticClass()))
-				{
-					FoundAsset = AssetData;
-					break;
-				}
+				FoundAsset = AssetData;
+				break;
 			}
 		}
 		
@@ -1704,21 +1772,17 @@ void SBlueprintProfilerWidget::NavigateToBlueprint(TSharedPtr<FProfilerDataItem>
 		{
 			for (const FAssetData& AssetData : AllAssets)
 			{
-				if (AssetData.AssetName.ToString().Contains(Item->BlueprintName) ||
-				    Item->BlueprintName.Contains(AssetData.AssetName.ToString()))
+				if (AssetData.AssetName.ToString().Contains(AssetName) ||
+				    AssetName.Contains(AssetData.AssetName.ToString()))
 				{
-					UClass* AssetClass = AssetData.GetClass();
-					if (AssetClass && AssetClass->IsChildOf(UBlueprint::StaticClass()))
-					{
-						FoundAsset = AssetData;
-						break;
-					}
+					FoundAsset = AssetData;
+					break;
 				}
 			}
 		}
 	}
 	
-	// Method 2: If still not found, try using FARFilter with recursive classes
+	// Method 2: Search for blueprints (for blueprint types)
 	if (!FoundAsset.IsValid())
 	{
 		FARFilter Filter;
@@ -1731,7 +1795,7 @@ void SBlueprintProfilerWidget::NavigateToBlueprint(TSharedPtr<FProfilerDataItem>
 		
 		for (const FAssetData& AssetData : AssetDataArray)
 		{
-			if (AssetData.AssetName.ToString() == Item->BlueprintName)
+			if (AssetData.AssetName.ToString() == AssetName)
 			{
 				FoundAsset = AssetData;
 				break;
@@ -1751,7 +1815,7 @@ void SBlueprintProfilerWidget::NavigateToBlueprint(TSharedPtr<FProfilerDataItem>
 		
 		for (const FAssetData& LevelAsset : LevelAssets)
 		{
-			if (LevelAsset.AssetName.ToString() == Item->BlueprintName)
+			if (LevelAsset.AssetName.ToString() == AssetName)
 			{
 				FoundAsset = LevelAsset;
 				break;
@@ -1761,6 +1825,9 @@ void SBlueprintProfilerWidget::NavigateToBlueprint(TSharedPtr<FProfilerDataItem>
 	
 	if (FoundAsset.IsValid())
 	{
+		UE_LOG(LogTemp, Log, TEXT("[NavigateToBlueprint] Found asset: '%s' at path '%s'"), 
+			*FoundAsset.AssetName.ToString(), *FoundAsset.GetObjectPathString());
+		
 		// Sync to content browser (navigate to asset in content browser)
 		TArray<FAssetData> AssetsToSync;
 		AssetsToSync.Add(FoundAsset);
@@ -1769,17 +1836,19 @@ void SBlueprintProfilerWidget::NavigateToBlueprint(TSharedPtr<FProfilerDataItem>
 		if (StatusText.IsValid())
 		{
 			StatusText->SetText(FText::Format(
-				LOCTEXT("StatusBlueprintNavigated", "已在内容浏览器中导航到蓝图 '{0}'"),
+				LOCTEXT("StatusAssetNavigated", "已在内容浏览器中导航到资产 '{0}'"),
 				FText::FromString(FoundAsset.AssetName.ToString())
 			));
 		}
 	}
 	else
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[NavigateToBlueprint] Could not find asset: '%s'"), *AssetName);
+		
 		if (StatusText.IsValid())
 		{
 			StatusText->SetText(FText::Format(
-				LOCTEXT("StatusBlueprintNotFound", "无法找到蓝图 '{0}'"),
+				LOCTEXT("StatusAssetNotFound", "无法找到资产 '{0}'"),
 				FText::FromString(Item->BlueprintName)
 			));
 		}
@@ -1803,19 +1872,64 @@ void SBlueprintProfilerWidget::NavigateToAsset(TSharedPtr<FProfilerDataItem> Ite
 	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
 	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
 	
-	FAssetData AssetData = AssetRegistry.GetAssetByObjectPath(FSoftObjectPath(Item->BlueprintName));
-	if (AssetData.IsValid())
+	FAssetData FoundAsset;
+	
+	// Get the asset name (remove _C suffix if present)
+	FString AssetName = Item->BlueprintName;
+	if (AssetName.EndsWith(TEXT("_C")))
+	{
+		AssetName = AssetName.LeftChop(2);
+	}
+	
+	// Method 1: Search all assets by name
+	{
+		TArray<FAssetData> AllAssets;
+		AssetRegistry.GetAllAssets(AllAssets);
+		
+		// First try exact match on asset name
+		for (const FAssetData& AssetData : AllAssets)
+		{
+			if (AssetData.AssetName.ToString() == AssetName)
+			{
+				FoundAsset = AssetData;
+				break;
+			}
+		}
+		
+		// If not found, try partial match
+		if (!FoundAsset.IsValid())
+		{
+			for (const FAssetData& AssetData : AllAssets)
+			{
+				if (AssetData.AssetName.ToString().Contains(AssetName) ||
+				    AssetName.Contains(AssetData.AssetName.ToString()))
+				{
+					FoundAsset = AssetData;
+					break;
+				}
+			}
+		}
+	}
+	
+	// Method 2: Try to use TargetObject if available
+	if (!FoundAsset.IsValid() && Item->TargetObject.IsValid())
+	{
+		FString AssetPath = Item->TargetObject->GetPathName();
+		FoundAsset = AssetRegistry.GetAssetByObjectPath(FSoftObjectPath(AssetPath));
+	}
+	
+	if (FoundAsset.IsValid())
 	{
 		// Sync to content browser (navigate to asset in content browser)
 		TArray<FAssetData> AssetsToSync;
-		AssetsToSync.Add(AssetData);
+		AssetsToSync.Add(FoundAsset);
 		GEditor->SyncBrowserToObjects(AssetsToSync);
 		
 		if (StatusText.IsValid())
 		{
 			StatusText->SetText(FText::Format(
 				LOCTEXT("StatusAssetNavigated", "已在内容浏览器中导航到资产 '{0}'"),
-				FText::FromString(Item->Name)
+				FText::FromString(FoundAsset.AssetName.ToString())
 			));
 		}
 		return;
@@ -2360,8 +2474,16 @@ TSharedPtr<FProfilerDataItem> SBlueprintProfilerWidget::CreateDataItemFromMemory
 	TSharedPtr<FProfilerDataItem> Item = MakeShared<FProfilerDataItem>();
 
 	Item->Type = EProfilerDataType::Memory;
-	Item->Name = Blueprint ? Blueprint->GetName() : TEXT("未知蓝图");
-	Item->BlueprintName = Item->Name;
+	
+	// Get the blueprint name (remove _C suffix if present)
+	FString BlueprintName = Blueprint ? Blueprint->GetName() : TEXT("未知蓝图");
+	if (BlueprintName.EndsWith(TEXT("_C")))
+	{
+		BlueprintName = BlueprintName.LeftChop(2);
+	}
+	
+	Item->Name = BlueprintName;
+	Item->BlueprintName = BlueprintName;
 	Item->Value = Data.InclusiveSize;
 	Item->TargetObject = Blueprint;
 
@@ -2714,9 +2836,13 @@ void SBlueprintProfilerWidget::JumpToNode(TSharedPtr<FProfilerDataItem> Item)
 		
 		FAssetData FoundAsset;
 		
-		// Try to find by direct path first (most efficient)
-		TArray<FString> PossiblePaths;
-		PossiblePaths.Add(FString::Printf(TEXT("/Game/%s.%s"), *Item->BlueprintName, *Item->BlueprintName));
+		// Get the blueprint name (remove _C suffix if present)
+		FString BlueprintName = Item->BlueprintName;
+		if (BlueprintName.EndsWith(TEXT("_C")))
+		{
+			BlueprintName = BlueprintName.LeftChop(2);
+		}
+		
 		// Method 1: Search all assets and filter by name (most reliable)
 		{
 			TArray<FAssetData> AllAssets;
@@ -2725,7 +2851,7 @@ void SBlueprintProfilerWidget::JumpToNode(TSharedPtr<FProfilerDataItem> Item)
 			// First try exact match on asset name
 			for (const FAssetData& AssetData : AllAssets)
 			{
-				if (AssetData.AssetName.ToString() == Item->BlueprintName)
+				if (AssetData.AssetName.ToString() == BlueprintName)
 				{
 					// Check if it's a blueprint type
 					UClass* AssetClass = AssetData.GetClass();
@@ -2742,8 +2868,8 @@ void SBlueprintProfilerWidget::JumpToNode(TSharedPtr<FProfilerDataItem> Item)
 			{
 				for (const FAssetData& AssetData : AllAssets)
 				{
-					if (AssetData.AssetName.ToString().Contains(Item->BlueprintName) ||
-					    Item->BlueprintName.Contains(AssetData.AssetName.ToString()))
+					if (AssetData.AssetName.ToString().Contains(BlueprintName) ||
+					    BlueprintName.Contains(AssetData.AssetName.ToString()))
 					{
 						UClass* AssetClass = AssetData.GetClass();
 						if (AssetClass && AssetClass->IsChildOf(UBlueprint::StaticClass()))
@@ -2769,7 +2895,7 @@ void SBlueprintProfilerWidget::JumpToNode(TSharedPtr<FProfilerDataItem> Item)
 			
 			for (const FAssetData& AssetData : AssetDataArray)
 			{
-				if (AssetData.AssetName.ToString() == Item->BlueprintName)
+				if (AssetData.AssetName.ToString() == BlueprintName)
 				{
 					FoundAsset = AssetData;
 					break;
@@ -2789,7 +2915,7 @@ void SBlueprintProfilerWidget::JumpToNode(TSharedPtr<FProfilerDataItem> Item)
 			
 			for (const FAssetData& LevelAsset : LevelAssets)
 			{
-				if (LevelAsset.AssetName.ToString() == Item->BlueprintName)
+				if (LevelAsset.AssetName.ToString() == BlueprintName)
 				{
 					FoundAsset = LevelAsset;
 					break;
