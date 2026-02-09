@@ -28,6 +28,10 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Misc/DefaultValueHelper.h"
 #include "Containers/Ticker.h"
+#include "Animation/AnimBlueprint.h"
+#include "Blueprint/UserWidget.h"
+#include "Engine/LevelScriptBlueprint.h"
+#include "Engine/World.h"
 
 #define LOCTEXT_NAMESPACE "SBlueprintProfilerWidget"
 
@@ -275,15 +279,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 								.IsEnabled(this, &SBlueprintProfilerWidget::CanLoadSession)
 								.ToolTipText(LOCTEXT("LoadSessionTooltip", "从文件加载会话数据"))
 							]
-							
-							+ SHorizontalBox::Slot()
-							.AutoWidth()
-							[
-								SAssignNew(ClearHistoryButton, SButton)
-								.Text(LOCTEXT("ClearHistory", "清除历史"))
-								.OnClicked(this, &SBlueprintProfilerWidget::OnClearSessionHistory)
-								.ToolTipText(LOCTEXT("ClearHistoryTooltip", "清除所有会话历史"))
-							]
+
 						]
 						
 						// PIE integration settings
@@ -389,7 +385,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 						.Padding(0, 8, 0, 4)
 						[
 							SNew(STextBlock)
-							.Text(LOCTEXT("MemoryAnalyzerTitle", "内存分析器"))
+							.Text(LOCTEXT("MemoryAnalyzerTitle", "引用分析器"))
 							.Font(FAppStyle::GetFontStyle("DetailsView.CategoryFontStyle"))
 						]
 						
@@ -669,6 +665,7 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 						.OnGenerateRow(this, &SBlueprintProfilerWidget::OnGenerateRow)
 						.OnMouseButtonDoubleClick(this, &SBlueprintProfilerWidget::OnItemDoubleClicked)
 						.OnSelectionChanged(this, &SBlueprintProfilerWidget::OnSelectionChanged)
+						.OnContextMenuOpening(this, &SBlueprintProfilerWidget::OnContextMenuOpening)
 						.HeaderRow
 						(
 							SNew(SHeaderRow)
@@ -718,16 +715,23 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 // Data management methods
 void SBlueprintProfilerWidget::RefreshData()
 {
+	UE_LOG(LogTemp, Log, TEXT("RefreshData: Called"));
+	
 	AllDataItems.Empty();
 	
 	// Collect runtime data
 	if (RuntimeProfiler.IsValid())
 	{
 		TArray<FNodeExecutionData> RuntimeData = RuntimeProfiler->GetExecutionData();
+		UE_LOG(LogTemp, Log, TEXT("RefreshData: Got %d runtime data items"), RuntimeData.Num());
 		for (const FNodeExecutionData& Data : RuntimeData)
 		{
 			AllDataItems.Add(CreateDataItemFromRuntimeData(Data));
 		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("RefreshData: RuntimeProfiler is not valid"));
 	}
 	
 	// Collect lint issues
@@ -975,15 +979,39 @@ FReply SBlueprintProfilerWidget::OnSaveSessionData()
 {
 	if (RuntimeProfiler.IsValid())
 	{
-		RuntimeProfiler->SaveSessionData();
-		
-		if (StatusText.IsValid())
+		// Open file save dialog
+		IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
+		if (DesktopPlatform)
 		{
-			FRecordingSession Session = RuntimeProfiler->GetCurrentSession();
-			StatusText->SetText(FText::Format(
-				LOCTEXT("StatusSessionSaved", "会话数据已保存：{0}"),
-				FText::FromString(Session.SessionName)
-			));
+			FString DefaultPath = RuntimeProfiler->GetSessionDataDirectory();
+			FString DefaultFileName = RuntimeProfiler->GetCurrentSession().SessionName + TEXT(".json");
+			TArray<FString> SavedFiles;
+			
+			// File types filter
+			const FString FileTypes = TEXT("JSON Files (*.json)|*.json");
+			
+			bool bSuccess = DesktopPlatform->SaveFileDialog(
+				FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr),
+				LOCTEXT("SaveSessionDialogTitle", "保存会话数据").ToString(),
+				DefaultPath,
+				DefaultFileName,
+				FileTypes,
+				0,
+				SavedFiles
+			);
+			
+			if (bSuccess && SavedFiles.Num() > 0)
+			{
+				RuntimeProfiler->SaveSessionData(SavedFiles[0]);
+				
+				if (StatusText.IsValid())
+				{
+					StatusText->SetText(FText::Format(
+						LOCTEXT("StatusSessionSaved", "会话数据已保存到：{0}"),
+						FText::FromString(SavedFiles[0])
+					));
+				}
+			}
 		}
 	}
 	return FReply::Handled();
@@ -993,19 +1021,51 @@ FReply SBlueprintProfilerWidget::OnLoadSessionData()
 {
 	if (RuntimeProfiler.IsValid())
 	{
-		// For now, load the most recent session file
-		// In a full implementation, this would open a file picker dialog
-		bool bLoaded = RuntimeProfiler->LoadSessionData(TEXT(""));
-		
-		if (StatusText.IsValid())
+		// Open file picker dialog
+		IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
+		if (DesktopPlatform)
 		{
-			if (bLoaded)
+			FString DefaultPath = RuntimeProfiler->GetSessionDataDirectory();
+			TArray<FString> SelectedFiles;
+			
+			// File types filter
+			const FString FileTypes = TEXT("JSON Files (*.json)|*.json|All Files (*.*)|*.*");
+			
+			bool bSuccess = DesktopPlatform->OpenFileDialog(
+				FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr),
+				LOCTEXT("LoadSessionDialogTitle", "选择要加载的会话数据文件").ToString(),
+				DefaultPath,
+				TEXT(""),
+				FileTypes,
+				0,
+				SelectedFiles
+			);
+			
+			if (bSuccess && SelectedFiles.Num() > 0)
 			{
-				StatusText->SetText(LOCTEXT("StatusSessionLoaded", "会话数据加载成功"));
-			}
-			else
-			{
-				StatusText->SetText(LOCTEXT("StatusSessionLoadFailed", "加载会话数据失败"));
+				FString SelectedFile = SelectedFiles[0];
+				bool bLoaded = RuntimeProfiler->LoadSessionData(SelectedFile);
+				
+				if (bLoaded)
+				{
+					// Refresh UI to show loaded data
+					RefreshData();
+				}
+				
+				if (StatusText.IsValid())
+				{
+					if (bLoaded)
+					{
+						StatusText->SetText(FText::Format(
+							LOCTEXT("StatusSessionLoaded", "会话数据已从 {0} 加载成功"),
+							FText::FromString(SelectedFile)
+						));
+					}
+					else
+					{
+						StatusText->SetText(LOCTEXT("StatusSessionLoadFailed", "加载会话数据失败"));
+					}
+				}
 			}
 		}
 	}
@@ -1555,6 +1615,250 @@ void SBlueprintProfilerWidget::OnSelectionChanged(
 	// Handle selection change if needed
 }
 
+TSharedPtr<SWidget> SBlueprintProfilerWidget::OnContextMenuOpening()
+{
+	// Get selected item
+	TArray<TSharedPtr<FProfilerDataItem>> SelectedItems = DataListView->GetSelectedItems();
+	if (SelectedItems.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("OnContextMenuOpening: No item selected"));
+		return nullptr;
+	}
+	
+	TSharedPtr<FProfilerDataItem> Item = SelectedItems[0];
+	if (!Item.IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("OnContextMenuOpening: Selected item is invalid"));
+		return nullptr;
+	}
+	
+	UE_LOG(LogTemp, Log, TEXT("OnContextMenuOpening: Item='%s', Blueprint='%s', Type=%d"), 
+		*Item->Name, *Item->BlueprintName, (int32)Item->Type);
+	
+	FMenuBuilder MenuBuilder(true, nullptr);
+	
+	// Add navigation options based on item type
+	MenuBuilder.BeginSection("Navigation", LOCTEXT("NavigationSection", "导航"));
+	
+	// Option 1: Navigate to Blueprint (always available for runtime/lint types)
+	if (Item->Type == EProfilerDataType::Runtime || Item->Type == EProfilerDataType::Lint)
+	{
+		MenuBuilder.AddMenuEntry(
+			LOCTEXT("NavigateToBlueprint", "导航到蓝图"),
+			LOCTEXT("NavigateToBlueprintTooltip", "在蓝图编辑器中打开蓝图"),
+			FSlateIcon(),
+			FUIAction(FExecuteAction::CreateSP(this, &SBlueprintProfilerWidget::NavigateToBlueprint, Item))
+		);
+	}
+	
+	// Option 2: Navigate to Node (only for runtime/lint types that have node info)
+	if ((Item->Type == EProfilerDataType::Runtime || Item->Type == EProfilerDataType::Lint) && 
+	    (!Item->Name.IsEmpty() && Item->Name != Item->BlueprintName))
+	{
+		MenuBuilder.AddMenuEntry(
+			LOCTEXT("NavigateToNode", "导航到节点"),
+			LOCTEXT("NavigateToNodeTooltip", "在蓝图编辑器中定位到具体节点"),
+			FSlateIcon(),
+			FUIAction(FExecuteAction::CreateSP(this, &SBlueprintProfilerWidget::NavigateToNode, Item))
+		);
+	}
+	
+	// Option 3: Navigate to Asset (for memory/reference types)
+	if (Item->Type == EProfilerDataType::Memory)
+	{
+		MenuBuilder.AddMenuEntry(
+			LOCTEXT("NavigateToAsset", "导航到资产"),
+			LOCTEXT("NavigateToAssetTooltip", "在编辑器中打开资产"),
+			FSlateIcon(),
+			FUIAction(FExecuteAction::CreateSP(this, &SBlueprintProfilerWidget::NavigateToAsset, Item))
+		);
+	}
+	
+	MenuBuilder.EndSection();
+	
+	return MenuBuilder.MakeWidget();
+}
+
+void SBlueprintProfilerWidget::NavigateToBlueprint(TSharedPtr<FProfilerDataItem> Item)
+{
+	if (!Item.IsValid())
+	{
+		return;
+	}
+	
+	UE_LOG(LogTemp, Log, TEXT("NavigateToBlueprint: Looking for blueprint '%s'"), *Item->BlueprintName);
+	
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+	
+	FAssetData FoundAsset;
+	
+	// Method 1: Search all assets and filter by name (most reliable)
+	// This finds blueprints regardless of their type or location
+	{
+		TArray<FAssetData> AllAssets;
+		AssetRegistry.GetAllAssets(AllAssets);
+		
+		// First try exact match on asset name
+		for (const FAssetData& AssetData : AllAssets)
+		{
+			if (AssetData.AssetName.ToString() == Item->BlueprintName)
+			{
+				// Check if it's a blueprint type
+				UClass* AssetClass = AssetData.GetClass();
+				if (AssetClass && AssetClass->IsChildOf(UBlueprint::StaticClass()))
+				{
+					FoundAsset = AssetData;
+					UE_LOG(LogTemp, Log, TEXT("NavigateToBlueprint: Found by name search - %s (Class: %s)"), 
+						*AssetData.GetObjectPathString(), *AssetClass->GetName());
+					break;
+				}
+			}
+		}
+		
+		// If not found, try partial match
+		if (!FoundAsset.IsValid())
+		{
+			for (const FAssetData& AssetData : AllAssets)
+			{
+				if (AssetData.AssetName.ToString().Contains(Item->BlueprintName) ||
+				    Item->BlueprintName.Contains(AssetData.AssetName.ToString()))
+				{
+					UClass* AssetClass = AssetData.GetClass();
+					if (AssetClass && AssetClass->IsChildOf(UBlueprint::StaticClass()))
+					{
+						FoundAsset = AssetData;
+						UE_LOG(LogTemp, Log, TEXT("NavigateToBlueprint: Found by partial match - %s (Class: %s)"), 
+							*AssetData.GetObjectPathString(), *AssetClass->GetName());
+						break;
+					}
+				}
+			}
+		}
+	}
+	
+	// Method 2: If still not found, try using FARFilter with recursive classes
+	if (!FoundAsset.IsValid())
+	{
+		FARFilter Filter;
+		Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
+		Filter.bRecursiveClasses = true;  // Include all subclasses
+		Filter.bRecursivePaths = true;
+		
+		TArray<FAssetData> AssetDataArray;
+		AssetRegistry.GetAssets(Filter, AssetDataArray);
+		
+		UE_LOG(LogTemp, Log, TEXT("NavigateToBlueprint: FARFilter found %d blueprint assets"), AssetDataArray.Num());
+		
+		for (const FAssetData& AssetData : AssetDataArray)
+		{
+			if (AssetData.AssetName.ToString() == Item->BlueprintName)
+			{
+				FoundAsset = AssetData;
+				UE_LOG(LogTemp, Log, TEXT("NavigateToBlueprint: Found by FARFilter - %s"), *AssetData.GetObjectPathString());
+				break;
+			}
+		}
+	}
+	
+	// Method 3: Search for level assets (for level blueprints)
+	if (!FoundAsset.IsValid())
+	{
+		FARFilter LevelFilter;
+		LevelFilter.ClassPaths.Add(UWorld::StaticClass()->GetClassPathName());
+		LevelFilter.bRecursivePaths = true;
+		
+		TArray<FAssetData> LevelAssets;
+		AssetRegistry.GetAssets(LevelFilter, LevelAssets);
+		
+		UE_LOG(LogTemp, Log, TEXT("NavigateToBlueprint: Searching %d level assets for '%s'"), LevelAssets.Num(), *Item->BlueprintName);
+		
+		for (const FAssetData& LevelAsset : LevelAssets)
+		{
+			if (LevelAsset.AssetName.ToString() == Item->BlueprintName)
+			{
+				FoundAsset = LevelAsset;
+				UE_LOG(LogTemp, Log, TEXT("NavigateToBlueprint: Found level - %s"), *LevelAsset.GetObjectPathString());
+				break;
+			}
+		}
+	}
+	
+	if (FoundAsset.IsValid())
+	{
+		UE_LOG(LogTemp, Log, TEXT("NavigateToBlueprint: Syncing to content browser - %s"), *FoundAsset.GetObjectPathString());
+		
+		// Sync to content browser (navigate to asset in content browser)
+		TArray<FAssetData> AssetsToSync;
+		AssetsToSync.Add(FoundAsset);
+		GEditor->SyncBrowserToObjects(AssetsToSync);
+		
+		if (StatusText.IsValid())
+		{
+			StatusText->SetText(FText::Format(
+				LOCTEXT("StatusBlueprintNavigated", "已在内容浏览器中导航到蓝图 '{0}'"),
+				FText::FromString(FoundAsset.AssetName.ToString())
+			));
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("NavigateToBlueprint: Could not find blueprint '%s'"), *Item->BlueprintName);
+		
+		if (StatusText.IsValid())
+		{
+			StatusText->SetText(FText::Format(
+				LOCTEXT("StatusBlueprintNotFound", "无法找到蓝图 '{0}'"),
+				FText::FromString(Item->BlueprintName)
+			));
+		}
+	}
+}
+
+void SBlueprintProfilerWidget::NavigateToNode(TSharedPtr<FProfilerDataItem> Item)
+{
+	// Use the existing JumpToNode logic
+	JumpToNode(Item);
+}
+
+void SBlueprintProfilerWidget::NavigateToAsset(TSharedPtr<FProfilerDataItem> Item)
+{
+	if (!Item.IsValid())
+	{
+		return;
+	}
+	
+	// Try to find the asset and navigate to it in content browser
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+	
+	FAssetData AssetData = AssetRegistry.GetAssetByObjectPath(FSoftObjectPath(Item->BlueprintName));
+	if (AssetData.IsValid())
+	{
+		// Sync to content browser (navigate to asset in content browser)
+		TArray<FAssetData> AssetsToSync;
+		AssetsToSync.Add(AssetData);
+		GEditor->SyncBrowserToObjects(AssetsToSync);
+		
+		if (StatusText.IsValid())
+		{
+			StatusText->SetText(FText::Format(
+				LOCTEXT("StatusAssetNavigated", "已在内容浏览器中导航到资产 '{0}'"),
+				FText::FromString(Item->Name)
+			));
+		}
+		return;
+	}
+	
+	if (StatusText.IsValid())
+	{
+		StatusText->SetText(FText::Format(
+			LOCTEXT("StatusAssetNotFound", "无法找到资产 '{0}'"),
+			FText::FromString(Item->Name)
+		));
+	}
+}
+
 // Filter and search handlers
 void SBlueprintProfilerWidget::OnSearchTextChanged(const FText& Text)
 {
@@ -1975,6 +2279,9 @@ TSharedPtr<FProfilerDataItem> SBlueprintProfilerWidget::CreateDataItemFromRuntim
 	Item->Value = Data.AverageExecutionsPerSecond;
 	Item->TargetObject = Data.BlueprintObject;
 	Item->NodeGuid = Data.NodeGuid; // 重要：设置NodeGuid以支持双击跳转
+	
+	UE_LOG(LogTemp, Log, TEXT("CreateDataItemFromRuntimeData: Node='%s', Blueprint='%s', Guid=%s"), 
+		*Item->Name, *Item->BlueprintName, *Item->NodeGuid.ToString());
 
 	// Categorize based on execution characteristics (使用中文类别)
 	if (Data.AverageExecutionsPerSecond > 1000.0f)
@@ -2430,6 +2737,144 @@ void SBlueprintProfilerWidget::JumpToNode(TSharedPtr<FProfilerDataItem> Item)
 		else
 		{
 			BP = Cast<UBlueprint>(TargetObject);
+		}
+	}
+	
+	// 如果没有 TargetObject，尝试通过名称查找蓝图
+	if (!BP && !Item->BlueprintName.IsEmpty())
+	{
+		FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+		IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+		
+		FAssetData FoundAsset;
+		
+		// Try to find by direct path first (most efficient)
+		TArray<FString> PossiblePaths;
+		PossiblePaths.Add(FString::Printf(TEXT("/Game/%s.%s"), *Item->BlueprintName, *Item->BlueprintName));
+		// Method 1: Search all assets and filter by name (most reliable)
+		{
+			TArray<FAssetData> AllAssets;
+			AssetRegistry.GetAllAssets(AllAssets);
+			
+			// First try exact match on asset name
+			for (const FAssetData& AssetData : AllAssets)
+			{
+				if (AssetData.AssetName.ToString() == Item->BlueprintName)
+				{
+					// Check if it's a blueprint type
+					UClass* AssetClass = AssetData.GetClass();
+					if (AssetClass && AssetClass->IsChildOf(UBlueprint::StaticClass()))
+					{
+						FoundAsset = AssetData;
+						UE_LOG(LogTemp, Log, TEXT("JumpToNode: Found by name search - %s (Class: %s)"), 
+							*AssetData.GetObjectPathString(), *AssetClass->GetName());
+						break;
+					}
+				}
+			}
+			
+			// If not found, try partial match
+			if (!FoundAsset.IsValid())
+			{
+				for (const FAssetData& AssetData : AllAssets)
+				{
+					if (AssetData.AssetName.ToString().Contains(Item->BlueprintName) ||
+					    Item->BlueprintName.Contains(AssetData.AssetName.ToString()))
+					{
+						UClass* AssetClass = AssetData.GetClass();
+						if (AssetClass && AssetClass->IsChildOf(UBlueprint::StaticClass()))
+						{
+							FoundAsset = AssetData;
+							UE_LOG(LogTemp, Log, TEXT("JumpToNode: Found by partial match - %s (Class: %s)"), 
+								*AssetData.GetObjectPathString(), *AssetClass->GetName());
+							break;
+						}
+					}
+				}
+			}
+		}
+		
+		// Method 2: If still not found, try using FARFilter with recursive classes
+		if (!FoundAsset.IsValid())
+		{
+			FARFilter Filter;
+			Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
+			Filter.bRecursiveClasses = true;  // Include all subclasses
+			Filter.bRecursivePaths = true;
+			
+			TArray<FAssetData> AssetDataArray;
+			AssetRegistry.GetAssets(Filter, AssetDataArray);
+			
+			for (const FAssetData& AssetData : AssetDataArray)
+			{
+				if (AssetData.AssetName.ToString() == Item->BlueprintName)
+				{
+					FoundAsset = AssetData;
+					UE_LOG(LogTemp, Log, TEXT("JumpToNode: Found by FARFilter - %s"), *AssetData.GetObjectPathString());
+					break;
+				}
+			}
+		}
+		
+		// Method 3: Search for level assets (for level blueprints)
+		if (!FoundAsset.IsValid())
+		{
+			FARFilter LevelFilter;
+			LevelFilter.ClassPaths.Add(UWorld::StaticClass()->GetClassPathName());
+			LevelFilter.bRecursivePaths = true;
+			
+			TArray<FAssetData> LevelAssets;
+			AssetRegistry.GetAssets(LevelFilter, LevelAssets);
+			
+			UE_LOG(LogTemp, Log, TEXT("JumpToNode: Searching %d level assets for '%s'"), LevelAssets.Num(), *Item->BlueprintName);
+			
+			for (const FAssetData& LevelAsset : LevelAssets)
+			{
+				if (LevelAsset.AssetName.ToString() == Item->BlueprintName)
+				{
+					FoundAsset = LevelAsset;
+					UE_LOG(LogTemp, Log, TEXT("JumpToNode: Found level - %s"), *LevelAsset.GetObjectPathString());
+					break;
+				}
+			}
+		}
+		
+		if (FoundAsset.IsValid())
+		{
+			UE_LOG(LogTemp, Log, TEXT("JumpToNode: Loading asset - %s"), *FoundAsset.GetObjectPathString());
+			UObject* Asset = FoundAsset.GetAsset();
+			
+			// Try to get blueprint from asset
+			if (Asset)
+			{
+				// Case 1: Asset is already a UBlueprint
+				BP = Cast<UBlueprint>(Asset);
+				
+				// Case 2: Asset is a UWorld (level), get its level script blueprint
+				if (!BP)
+				{
+					if (UWorld* World = Cast<UWorld>(Asset))
+					{
+						if (World->PersistentLevel)
+						{
+							BP = World->PersistentLevel->GetLevelScriptBlueprint(true);
+							if (BP)
+							{
+								UE_LOG(LogTemp, Log, TEXT("JumpToNode: Got level script blueprint from world"));
+							}
+						}
+					}
+				}
+			}
+			
+			if (!BP)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("JumpToNode: Failed to get blueprint from asset - %s"), *FoundAsset.GetObjectPathString());
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("JumpToNode: Could not find asset for blueprint '%s'"), *Item->BlueprintName);
 		}
 	}
 

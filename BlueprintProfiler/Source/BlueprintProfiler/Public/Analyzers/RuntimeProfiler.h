@@ -61,6 +61,7 @@ public:
 	void SaveSessionData(const FString& FilePath = TEXT(""));
 	bool LoadSessionData(const FString& FilePath);
 	void ClearSessionHistory();
+	FString GetSessionDataDirectory() const;
 
 	// Data access
 	TArray<FNodeExecutionData> GetExecutionData() const;
@@ -136,6 +137,9 @@ private:
 	TMap<TWeakObjectPtr<UObject>, FNodeExecutionStats> NodeStats;
 	TArray<FExecutionFrame> ExecutionFrames;
 	TArray<FTickAbuseInfo> TickAbuseData;
+	
+	// Loaded session data for display (persisted across PIE sessions)
+	TArray<FNodeExecutionData> LoadedSessionData;
 
 	// Timer for periodic blueprint execution collection
 	FTimerHandle SamplingTimerHandle;

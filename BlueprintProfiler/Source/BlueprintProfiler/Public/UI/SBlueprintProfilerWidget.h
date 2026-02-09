@@ -57,6 +57,12 @@ private:
 	TSharedRef<ITableRow> OnGenerateRow(TSharedPtr<FProfilerDataItem> Item, const TSharedRef<STableViewBase>& OwnerTable);
 	void OnItemDoubleClicked(TSharedPtr<FProfilerDataItem> Item);
 	void OnSelectionChanged(TSharedPtr<FProfilerDataItem> Item, ESelectInfo::Type SelectInfo);
+	TSharedPtr<SWidget> OnContextMenuOpening();
+	
+	// Navigation handlers
+	void NavigateToBlueprint(TSharedPtr<FProfilerDataItem> Item);
+	void NavigateToNode(TSharedPtr<FProfilerDataItem> Item);
+	void NavigateToAsset(TSharedPtr<FProfilerDataItem> Item);
 
 	// Filter and search handlers
 	void OnSearchTextChanged(const FText& Text);

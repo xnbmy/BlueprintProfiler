@@ -236,6 +236,13 @@ TArray<FNodeExecutionData> FRuntimeProfiler::GetExecutionData() const
 {
 	TArray<FNodeExecutionData> Result;
 
+	// If we have loaded session data, return it directly
+	if (LoadedSessionData.Num() > 0)
+	{
+		UE_LOG(LogTemp, Log, TEXT("GetExecutionData: Returning %d loaded session data items"), LoadedSessionData.Num());
+		return LoadedSessionData;
+	}
+
 	float RecordingDuration = 0.0f;
 	if (CurrentState == ERecordingState::Recording)
 	{
@@ -317,6 +324,17 @@ TArray<FNodeExecutionData> FRuntimeProfiler::GetExecutionData() const
 						Data.BlueprintName = GeneratedByBlueprint->GetName();
 						Data.NodeName = Object->GetName();
 					}
+					else
+					{
+						// Try to get name from BPClass
+						Data.BlueprintName = BPClass->GetName();
+						// Remove _C suffix if present
+						if (Data.BlueprintName.EndsWith(TEXT("_C")))
+						{
+							Data.BlueprintName = Data.BlueprintName.LeftChop(2);
+						}
+						Data.NodeName = Object->GetName();
+					}
 				}
 				// Fallback: Unknown
 				else
@@ -334,6 +352,15 @@ TArray<FNodeExecutionData> FRuntimeProfiler::GetExecutionData() const
 			SkippedInvalid++;
 		}
 	}
+	
+	// Add loaded session data if no current recording data
+	if (Result.Num() == 0 && LoadedSessionData.Num() > 0)
+	{
+		UE_LOG(LogTemp, Log, TEXT("GetExecutionData: Returning %d loaded session data items"), LoadedSessionData.Num());
+		Result = LoadedSessionData;
+	}
+	
+	UE_LOG(LogTemp, Log, TEXT("GetExecutionData: Result.Num()=%d, LoadedSessionData.Num()=%d"), Result.Num(), LoadedSessionData.Num());
 
 	return Result;
 }
@@ -427,6 +454,7 @@ void FRuntimeProfiler::SaveSessionData(const FString& FilePath)
 		TSharedPtr<FJsonObject> DataJson = MakeShareable(new FJsonObject);
 		DataJson->SetStringField(TEXT("NodeName"), Data.NodeName);
 		DataJson->SetStringField(TEXT("BlueprintName"), Data.BlueprintName);
+		DataJson->SetStringField(TEXT("NodeGuid"), Data.NodeGuid.ToString());
 		DataJson->SetNumberField(TEXT("TotalExecutions"), Data.TotalExecutions);
 		DataJson->SetNumberField(TEXT("AverageExecutionsPerSecond"), Data.AverageExecutionsPerSecond);
 		DataJson->SetNumberField(TEXT("TotalExecutionTime"), Data.TotalExecutionTime);
@@ -502,9 +530,49 @@ bool FRuntimeProfiler::LoadSessionData(const FString& FilePath)
 		{
 			SessionHistory.Add(LoadedSession);
 		}
+		
+		// Set as current session
+		CurrentSession = LoadedSession;
 	}
 	
-	UE_LOG(LogTemp, Log, TEXT("Session data loaded from: %s"), *LoadPath);
+	// Load execution data
+	const TArray<TSharedPtr<FJsonValue>>* ExecutionDataArray;
+	if (JsonObject->TryGetArrayField(TEXT("ExecutionData"), ExecutionDataArray))
+	{
+		UE_LOG(LogTemp, Log, TEXT("LoadSessionData: Found ExecutionData array with %d items"), ExecutionDataArray->Num());
+		
+		NodeStats.Empty();
+		LoadedSessionData.Empty();
+		
+		UE_LOG(LogTemp, Log, TEXT("LoadSessionData: Cleared LoadedSessionData, now loading..."));
+		
+		// Load execution data for display
+		for (const TSharedPtr<FJsonValue>& Value : *ExecutionDataArray)
+		{
+			TSharedPtr<FJsonObject> DataJson = Value->AsObject();
+			if (DataJson.IsValid())
+			{
+				FNodeExecutionData Data;
+				Data.NodeName = DataJson->GetStringField(TEXT("NodeName"));
+				Data.BlueprintName = DataJson->GetStringField(TEXT("BlueprintName"));
+				FGuid::Parse(DataJson->GetStringField(TEXT("NodeGuid")), Data.NodeGuid);
+				Data.TotalExecutions = DataJson->GetIntegerField(TEXT("TotalExecutions"));
+				Data.AverageExecutionsPerSecond = DataJson->GetNumberField(TEXT("AverageExecutionsPerSecond"));
+				Data.TotalExecutionTime = DataJson->GetNumberField(TEXT("TotalExecutionTime"));
+				Data.AverageExecutionTime = DataJson->GetNumberField(TEXT("AverageExecutionTime"));
+				
+				LoadedSessionData.Add(Data);
+			}
+		}
+		
+		UE_LOG(LogTemp, Log, TEXT("LoadSessionData: Loaded %d items into LoadedSessionData"), LoadedSessionData.Num());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LoadSessionData: No ExecutionData array found in JSON"));
+	}
+	
+	UE_LOG(LogTemp, Log, TEXT("Session data loaded from: %s, Nodes: %d"), *LoadPath, LoadedSessionData.Num());
 	return true;
 }
 
@@ -531,6 +599,11 @@ FString FRuntimeProfiler::GetSessionDataFilePath(const FString& SessionName) con
 	}
 	
 	return FilePath;
+}
+
+FString FRuntimeProfiler::GetSessionDataDirectory() const
+{
+	return FPaths::ProjectSavedDir() / TEXT("BlueprintProfiler") / TEXT("Sessions");
 }
 
 TArray<FHotNodeInfo> FRuntimeProfiler::GetHotNodes(float Threshold) const
@@ -789,7 +862,33 @@ void FRuntimeProfiler::OnScriptProfilingEvent(const FScriptInstrumentationSignal
 		if (Stats.CachedNodeName.IsEmpty())
 		{
 			Stats.CachedNodeName = ContextObject->GetName();
-			Stats.CachedBlueprintName = ContextObject->GetClass()->GetName();
+			
+			// 尝试获取蓝图名称（去掉 _C 后缀）
+			UClass* ObjectClass = ContextObject->GetClass();
+			if (UBlueprintGeneratedClass* BPClass = Cast<UBlueprintGeneratedClass>(ObjectClass))
+			{
+				if (UBlueprint* Blueprint = Cast<UBlueprint>(BPClass->ClassGeneratedBy))
+				{
+					Stats.CachedBlueprintName = Blueprint->GetName();
+					UE_LOG(LogTemp, Log, TEXT("[PROFILER] Cached blueprint name from ClassGeneratedBy: %s"), *Stats.CachedBlueprintName);
+				}
+				else
+				{
+					Stats.CachedBlueprintName = ObjectClass->GetName();
+					// 去掉 _C 后缀
+					if (Stats.CachedBlueprintName.EndsWith(TEXT("_C")))
+					{
+						Stats.CachedBlueprintName = Stats.CachedBlueprintName.LeftChop(2);
+					}
+					UE_LOG(LogTemp, Log, TEXT("[PROFILER] Cached blueprint name from class (trimmed): %s"), *Stats.CachedBlueprintName);
+				}
+			}
+			else
+			{
+				Stats.CachedBlueprintName = ObjectClass->GetName();
+				UE_LOG(LogTemp, Log, TEXT("[PROFILER] Cached blueprint name from class: %s"), *Stats.CachedBlueprintName);
+			}
+			
 			Stats.CachedNodeGuid = FGuid::NewGuid(); // 生成临时 GUID
 		}
 
