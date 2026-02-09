@@ -31,7 +31,7 @@ void FBlueprintProfilerModule::StartupModule()
 	UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FBlueprintProfilerModule::RegisterMenus));
 	
 	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(BlueprintProfilerTabName, FOnSpawnTab::CreateRaw(this, &FBlueprintProfilerModule::OnSpawnPluginTab))
-		.SetDisplayName(LOCTEXT("FBlueprintProfilerTabTitle", "Blueprint Profiler"))
+		.SetDisplayName(LOCTEXT("FBlueprintProfilerTabTitle", "蓝图分析器"))
 		.SetMenuType(ETabSpawnerMenuType::Hidden);
 }
 

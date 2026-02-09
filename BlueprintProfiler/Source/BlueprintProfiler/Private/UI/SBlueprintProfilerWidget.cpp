@@ -715,23 +715,16 @@ void SBlueprintProfilerWidget::Construct(const FArguments& InArgs)
 // Data management methods
 void SBlueprintProfilerWidget::RefreshData()
 {
-	UE_LOG(LogTemp, Log, TEXT("RefreshData: Called"));
-	
 	AllDataItems.Empty();
 	
 	// Collect runtime data
 	if (RuntimeProfiler.IsValid())
 	{
 		TArray<FNodeExecutionData> RuntimeData = RuntimeProfiler->GetExecutionData();
-		UE_LOG(LogTemp, Log, TEXT("RefreshData: Got %d runtime data items"), RuntimeData.Num());
 		for (const FNodeExecutionData& Data : RuntimeData)
 		{
 			AllDataItems.Add(CreateDataItemFromRuntimeData(Data));
 		}
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("RefreshData: RuntimeProfiler is not valid"));
 	}
 	
 	// Collect lint issues
@@ -1621,19 +1614,14 @@ TSharedPtr<SWidget> SBlueprintProfilerWidget::OnContextMenuOpening()
 	TArray<TSharedPtr<FProfilerDataItem>> SelectedItems = DataListView->GetSelectedItems();
 	if (SelectedItems.Num() == 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("OnContextMenuOpening: No item selected"));
 		return nullptr;
 	}
 	
 	TSharedPtr<FProfilerDataItem> Item = SelectedItems[0];
 	if (!Item.IsValid())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("OnContextMenuOpening: Selected item is invalid"));
 		return nullptr;
 	}
-	
-	UE_LOG(LogTemp, Log, TEXT("OnContextMenuOpening: Item='%s', Blueprint='%s', Type=%d"), 
-		*Item->Name, *Item->BlueprintName, (int32)Item->Type);
 	
 	FMenuBuilder MenuBuilder(true, nullptr);
 	
@@ -1686,15 +1674,12 @@ void SBlueprintProfilerWidget::NavigateToBlueprint(TSharedPtr<FProfilerDataItem>
 		return;
 	}
 	
-	UE_LOG(LogTemp, Log, TEXT("NavigateToBlueprint: Looking for blueprint '%s'"), *Item->BlueprintName);
-	
 	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
 	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
 	
 	FAssetData FoundAsset;
 	
 	// Method 1: Search all assets and filter by name (most reliable)
-	// This finds blueprints regardless of their type or location
 	{
 		TArray<FAssetData> AllAssets;
 		AssetRegistry.GetAllAssets(AllAssets);
@@ -1709,8 +1694,6 @@ void SBlueprintProfilerWidget::NavigateToBlueprint(TSharedPtr<FProfilerDataItem>
 				if (AssetClass && AssetClass->IsChildOf(UBlueprint::StaticClass()))
 				{
 					FoundAsset = AssetData;
-					UE_LOG(LogTemp, Log, TEXT("NavigateToBlueprint: Found by name search - %s (Class: %s)"), 
-						*AssetData.GetObjectPathString(), *AssetClass->GetName());
 					break;
 				}
 			}
@@ -1728,8 +1711,6 @@ void SBlueprintProfilerWidget::NavigateToBlueprint(TSharedPtr<FProfilerDataItem>
 					if (AssetClass && AssetClass->IsChildOf(UBlueprint::StaticClass()))
 					{
 						FoundAsset = AssetData;
-						UE_LOG(LogTemp, Log, TEXT("NavigateToBlueprint: Found by partial match - %s (Class: %s)"), 
-							*AssetData.GetObjectPathString(), *AssetClass->GetName());
 						break;
 					}
 				}
@@ -1742,20 +1723,17 @@ void SBlueprintProfilerWidget::NavigateToBlueprint(TSharedPtr<FProfilerDataItem>
 	{
 		FARFilter Filter;
 		Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
-		Filter.bRecursiveClasses = true;  // Include all subclasses
+		Filter.bRecursiveClasses = true;
 		Filter.bRecursivePaths = true;
 		
 		TArray<FAssetData> AssetDataArray;
 		AssetRegistry.GetAssets(Filter, AssetDataArray);
-		
-		UE_LOG(LogTemp, Log, TEXT("NavigateToBlueprint: FARFilter found %d blueprint assets"), AssetDataArray.Num());
 		
 		for (const FAssetData& AssetData : AssetDataArray)
 		{
 			if (AssetData.AssetName.ToString() == Item->BlueprintName)
 			{
 				FoundAsset = AssetData;
-				UE_LOG(LogTemp, Log, TEXT("NavigateToBlueprint: Found by FARFilter - %s"), *AssetData.GetObjectPathString());
 				break;
 			}
 		}
@@ -1771,14 +1749,11 @@ void SBlueprintProfilerWidget::NavigateToBlueprint(TSharedPtr<FProfilerDataItem>
 		TArray<FAssetData> LevelAssets;
 		AssetRegistry.GetAssets(LevelFilter, LevelAssets);
 		
-		UE_LOG(LogTemp, Log, TEXT("NavigateToBlueprint: Searching %d level assets for '%s'"), LevelAssets.Num(), *Item->BlueprintName);
-		
 		for (const FAssetData& LevelAsset : LevelAssets)
 		{
 			if (LevelAsset.AssetName.ToString() == Item->BlueprintName)
 			{
 				FoundAsset = LevelAsset;
-				UE_LOG(LogTemp, Log, TEXT("NavigateToBlueprint: Found level - %s"), *LevelAsset.GetObjectPathString());
 				break;
 			}
 		}
@@ -1786,8 +1761,6 @@ void SBlueprintProfilerWidget::NavigateToBlueprint(TSharedPtr<FProfilerDataItem>
 	
 	if (FoundAsset.IsValid())
 	{
-		UE_LOG(LogTemp, Log, TEXT("NavigateToBlueprint: Syncing to content browser - %s"), *FoundAsset.GetObjectPathString());
-		
 		// Sync to content browser (navigate to asset in content browser)
 		TArray<FAssetData> AssetsToSync;
 		AssetsToSync.Add(FoundAsset);
@@ -1803,8 +1776,6 @@ void SBlueprintProfilerWidget::NavigateToBlueprint(TSharedPtr<FProfilerDataItem>
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("NavigateToBlueprint: Could not find blueprint '%s'"), *Item->BlueprintName);
-		
 		if (StatusText.IsValid())
 		{
 			StatusText->SetText(FText::Format(
@@ -1937,8 +1908,6 @@ void SBlueprintProfilerWidget::OnHideEngineNodesChanged(ECheckBoxState NewState)
 		DataListView->RequestListRefresh();
 	}
 
-	// Log the change for debugging
-	UE_LOG(LogTemp, Log, TEXT("[Profiler] Hide engine internal nodes: %s"), bHide ? TEXT("Enabled") : TEXT("Disabled"));
 }
 
 // Data processing methods
@@ -2278,10 +2247,7 @@ TSharedPtr<FProfilerDataItem> SBlueprintProfilerWidget::CreateDataItemFromRuntim
 	Item->BlueprintName = Data.BlueprintName.IsEmpty() ? TEXT("未知蓝图") : Data.BlueprintName;
 	Item->Value = Data.AverageExecutionsPerSecond;
 	Item->TargetObject = Data.BlueprintObject;
-	Item->NodeGuid = Data.NodeGuid; // 重要：设置NodeGuid以支持双击跳转
-	
-	UE_LOG(LogTemp, Log, TEXT("CreateDataItemFromRuntimeData: Node='%s', Blueprint='%s', Guid=%s"), 
-		*Item->Name, *Item->BlueprintName, *Item->NodeGuid.ToString());
+	Item->NodeGuid = Data.NodeGuid;
 
 	// Categorize based on execution characteristics (使用中文类别)
 	if (Data.AverageExecutionsPerSecond > 1000.0f)
@@ -2766,8 +2732,6 @@ void SBlueprintProfilerWidget::JumpToNode(TSharedPtr<FProfilerDataItem> Item)
 					if (AssetClass && AssetClass->IsChildOf(UBlueprint::StaticClass()))
 					{
 						FoundAsset = AssetData;
-						UE_LOG(LogTemp, Log, TEXT("JumpToNode: Found by name search - %s (Class: %s)"), 
-							*AssetData.GetObjectPathString(), *AssetClass->GetName());
 						break;
 					}
 				}
@@ -2785,8 +2749,6 @@ void SBlueprintProfilerWidget::JumpToNode(TSharedPtr<FProfilerDataItem> Item)
 						if (AssetClass && AssetClass->IsChildOf(UBlueprint::StaticClass()))
 						{
 							FoundAsset = AssetData;
-							UE_LOG(LogTemp, Log, TEXT("JumpToNode: Found by partial match - %s (Class: %s)"), 
-								*AssetData.GetObjectPathString(), *AssetClass->GetName());
 							break;
 						}
 					}
@@ -2799,7 +2761,7 @@ void SBlueprintProfilerWidget::JumpToNode(TSharedPtr<FProfilerDataItem> Item)
 		{
 			FARFilter Filter;
 			Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
-			Filter.bRecursiveClasses = true;  // Include all subclasses
+			Filter.bRecursiveClasses = true;
 			Filter.bRecursivePaths = true;
 			
 			TArray<FAssetData> AssetDataArray;
@@ -2810,7 +2772,6 @@ void SBlueprintProfilerWidget::JumpToNode(TSharedPtr<FProfilerDataItem> Item)
 				if (AssetData.AssetName.ToString() == Item->BlueprintName)
 				{
 					FoundAsset = AssetData;
-					UE_LOG(LogTemp, Log, TEXT("JumpToNode: Found by FARFilter - %s"), *AssetData.GetObjectPathString());
 					break;
 				}
 			}
@@ -2826,14 +2787,11 @@ void SBlueprintProfilerWidget::JumpToNode(TSharedPtr<FProfilerDataItem> Item)
 			TArray<FAssetData> LevelAssets;
 			AssetRegistry.GetAssets(LevelFilter, LevelAssets);
 			
-			UE_LOG(LogTemp, Log, TEXT("JumpToNode: Searching %d level assets for '%s'"), LevelAssets.Num(), *Item->BlueprintName);
-			
 			for (const FAssetData& LevelAsset : LevelAssets)
 			{
 				if (LevelAsset.AssetName.ToString() == Item->BlueprintName)
 				{
 					FoundAsset = LevelAsset;
-					UE_LOG(LogTemp, Log, TEXT("JumpToNode: Found level - %s"), *LevelAsset.GetObjectPathString());
 					break;
 				}
 			}
@@ -2841,7 +2799,6 @@ void SBlueprintProfilerWidget::JumpToNode(TSharedPtr<FProfilerDataItem> Item)
 		
 		if (FoundAsset.IsValid())
 		{
-			UE_LOG(LogTemp, Log, TEXT("JumpToNode: Loading asset - %s"), *FoundAsset.GetObjectPathString());
 			UObject* Asset = FoundAsset.GetAsset();
 			
 			// Try to get blueprint from asset
@@ -2858,23 +2815,10 @@ void SBlueprintProfilerWidget::JumpToNode(TSharedPtr<FProfilerDataItem> Item)
 						if (World->PersistentLevel)
 						{
 							BP = World->PersistentLevel->GetLevelScriptBlueprint(true);
-							if (BP)
-							{
-								UE_LOG(LogTemp, Log, TEXT("JumpToNode: Got level script blueprint from world"));
-							}
 						}
 					}
 				}
 			}
-			
-			if (!BP)
-			{
-				UE_LOG(LogTemp, Warning, TEXT("JumpToNode: Failed to get blueprint from asset - %s"), *FoundAsset.GetObjectPathString());
-			}
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("JumpToNode: Could not find asset for blueprint '%s'"), *Item->BlueprintName);
 		}
 	}
 

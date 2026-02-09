@@ -91,12 +91,8 @@ FRuntimeProfiler::~FRuntimeProfiler()
 
 void FRuntimeProfiler::StartRecording(const FString& SessionName)
 {
-	UE_LOG(LogTemp, Log, TEXT("[PROFILER] StartRecording called - CurrentState: %d, SessionName: %s"),
-		(int32)CurrentState, *SessionName);
-
 	if (CurrentState == ERecordingState::Recording)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[PROFILER] Already recording, ignoring StartRecording call"));
 		return;
 	}
 
@@ -119,38 +115,21 @@ void FRuntimeProfiler::StartRecording(const FString& SessionName)
 	LastLoggingTime = 0.0;
 
 	// 启用蓝图仪表化（绑定到 OnScriptProfilingEvent）
-	// 这是捕获蓝图节点执行的主要方法
 	EnableBlueprintInstrumentation();
 
 	// 绑定到断点触发委托（如果还没有绑定）
-	// 这是备用方法，用于通过断点/追踪点捕获节点执行
 	if (!ScriptExceptionDelegateHandle.IsValid())
 	{
 		ScriptExceptionDelegateHandle = FBlueprintCoreDelegates::OnScriptException.AddRaw(this, &FRuntimeProfiler::OnScriptExceptionTrace);
-		UE_LOG(LogTemp, Log, TEXT("[PROFILER] Bound to OnScriptException delegate (tracepoint backup)"));
 	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[PROFILER] OnScriptException delegate already bound"));
-	}
-
-	// 注意：不再设置追踪点（会导致UI卡顿，且效率低）
-	// 只依赖 OnScriptProfilingEvent 捕获数据
-
-	UE_LOG(LogTemp, Log, TEXT("[PROFILER] Runtime profiler recording started - Session: %s"), *CurrentSession.SessionName);
 }
 
 void FRuntimeProfiler::StopRecording()
 {
-	UE_LOG(LogTemp, Log, TEXT("[PROFILER] StopRecording called - CurrentState: %d"), (int32)CurrentState);
-
 	if (CurrentState == ERecordingState::Stopped)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[PROFILER] Already stopped, ignoring StopRecording call"));
 		return;
 	}
-
-	UE_LOG(LogTemp, Log, TEXT("[PROFILER] Stopping recording - Session: %s"), *CurrentSession.SessionName);
 
 	CurrentState = ERecordingState::Stopped;
 
@@ -165,16 +144,10 @@ void FRuntimeProfiler::StopRecording()
 	{
 		FBlueprintCoreDelegates::OnScriptException.Remove(ScriptExceptionDelegateHandle);
 		ScriptExceptionDelegateHandle.Reset();
-		UE_LOG(LogTemp, Log, TEXT("[PROFILER] Unbound from OnScriptException delegate"));
 	}
-
-	// 注意：不再需要移除追踪点（因为我们没有设置）
 
 	// End current session and save to history
 	EndCurrentSession();
-
-	UE_LOG(LogTemp, Log, TEXT("[PROFILER] Runtime profiler recording stopped - Session: %s, Total events processed: %llu"),
-		*CurrentSession.SessionName, TotalEventsProcessed);
 }
 
 void FRuntimeProfiler::PauseRecording()
@@ -209,7 +182,6 @@ void FRuntimeProfiler::ResumeRecording()
 	// 恢复时启用追踪点回调
 	bSkipRecording = false;
 
-	UE_LOG(LogTemp, Log, TEXT("Runtime profiler recording resumed"));
 }
 
 void FRuntimeProfiler::ResetData()
@@ -228,8 +200,6 @@ void FRuntimeProfiler::ResetData()
 	
 	// Reset current session
 	CurrentSession = FRecordingSession();
-	
-	UE_LOG(LogTemp, Log, TEXT("Runtime profiler data reset"));
 }
 
 TArray<FNodeExecutionData> FRuntimeProfiler::GetExecutionData() const
@@ -239,7 +209,6 @@ TArray<FNodeExecutionData> FRuntimeProfiler::GetExecutionData() const
 	// If we have loaded session data, return it directly
 	if (LoadedSessionData.Num() > 0)
 	{
-		UE_LOG(LogTemp, Log, TEXT("GetExecutionData: Returning %d loaded session data items"), LoadedSessionData.Num());
 		return LoadedSessionData;
 	}
 
@@ -359,8 +328,6 @@ TArray<FNodeExecutionData> FRuntimeProfiler::GetExecutionData() const
 		UE_LOG(LogTemp, Log, TEXT("GetExecutionData: Returning %d loaded session data items"), LoadedSessionData.Num());
 		Result = LoadedSessionData;
 	}
-	
-	UE_LOG(LogTemp, Log, TEXT("GetExecutionData: Result.Num()=%d, LoadedSessionData.Num()=%d"), Result.Num(), LoadedSessionData.Num());
 
 	return Result;
 }
@@ -372,9 +339,7 @@ void FRuntimeProfiler::StartNewSession(const FString& SessionName)
 	CurrentSession.SessionName = SessionName.IsEmpty() ? GenerateDefaultSessionName() : SessionName;
 	CurrentSession.StartTime = FDateTime::Now();
 	CurrentSession.bIsActive = true;
-	CurrentSession.bAutoStarted = false; // Will be set by PIE integration if needed
-	
-	UE_LOG(LogTemp, Log, TEXT("Started new recording session: %s"), *CurrentSession.SessionName);
+	CurrentSession.bAutoStarted = false;
 }
 
 void FRuntimeProfiler::EndCurrentSession()
@@ -398,9 +363,6 @@ void FRuntimeProfiler::EndCurrentSession()
 	{
 		SessionHistory.RemoveAt(0, SessionHistory.Num() - 50);
 	}
-	
-	UE_LOG(LogTemp, Log, TEXT("Ended recording session: %s (Duration: %.2fs, Nodes: %d, Executions: %d)"), 
-		*CurrentSession.SessionName, CurrentSession.Duration, CurrentSession.TotalNodesRecorded, CurrentSession.TotalExecutions);
 }
 
 void FRuntimeProfiler::UpdateSessionStats()
@@ -487,7 +449,6 @@ bool FRuntimeProfiler::LoadSessionData(const FString& FilePath)
 	FString FileContent;
 	if (!FFileHelper::LoadFileToString(FileContent, *LoadPath))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Failed to load session data from: %s"), *LoadPath);
 		return false;
 	}
 	
@@ -496,7 +457,6 @@ bool FRuntimeProfiler::LoadSessionData(const FString& FilePath)
 	
 	if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
 	{
-		UE_LOG(LogTemp, Error, TEXT("Failed to parse session data JSON from: %s"), *LoadPath);
 		return false;
 	}
 	
@@ -539,12 +499,8 @@ bool FRuntimeProfiler::LoadSessionData(const FString& FilePath)
 	const TArray<TSharedPtr<FJsonValue>>* ExecutionDataArray;
 	if (JsonObject->TryGetArrayField(TEXT("ExecutionData"), ExecutionDataArray))
 	{
-		UE_LOG(LogTemp, Log, TEXT("LoadSessionData: Found ExecutionData array with %d items"), ExecutionDataArray->Num());
-		
 		NodeStats.Empty();
 		LoadedSessionData.Empty();
-		
-		UE_LOG(LogTemp, Log, TEXT("LoadSessionData: Cleared LoadedSessionData, now loading..."));
 		
 		// Load execution data for display
 		for (const TSharedPtr<FJsonValue>& Value : *ExecutionDataArray)
@@ -564,22 +520,14 @@ bool FRuntimeProfiler::LoadSessionData(const FString& FilePath)
 				LoadedSessionData.Add(Data);
 			}
 		}
-		
-		UE_LOG(LogTemp, Log, TEXT("LoadSessionData: Loaded %d items into LoadedSessionData"), LoadedSessionData.Num());
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("LoadSessionData: No ExecutionData array found in JSON"));
 	}
 	
-	UE_LOG(LogTemp, Log, TEXT("Session data loaded from: %s, Nodes: %d"), *LoadPath, LoadedSessionData.Num());
 	return true;
 }
 
 void FRuntimeProfiler::ClearSessionHistory()
 {
 	SessionHistory.Empty();
-	UE_LOG(LogTemp, Log, TEXT("Session history cleared"));
 }
 
 FString FRuntimeProfiler::GetSessionDataFilePath(const FString& SessionName) const
@@ -689,43 +637,20 @@ void FRuntimeProfiler::OnPIEBegin(bool bIsSimulating)
 		StartRecording(SessionName);
 		CurrentSession.bAutoStarted = true;
 
-		UE_LOG(LogTemp, Log, TEXT("[PROFILER] PIE began, auto-started runtime profiler recording: %s"), *SessionName);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Log, TEXT("[PROFILER] PIE began, runtime profiler ready (auto-start: %s, CurrentState: %d)"),
-			bAutoStartOnPIE ? TEXT("enabled") : TEXT("disabled"),
-			(int32)CurrentState);
 	}
 }
 
 void FRuntimeProfiler::OnPIEEnd(bool bIsSimulating)
 {
-	UE_LOG(LogTemp, Log, TEXT("[PROFILER] OnPIEEnd called - bAutoStopOnPIEEnd: %s, CurrentState: %d"),
-		bAutoStopOnPIEEnd ? TEXT("true") : TEXT("false"),
-		(int32)CurrentState);
-
 	// Auto-stop recording when PIE ends if configured to do so
 	if (bAutoStopOnPIEEnd && CurrentState == ERecordingState::Recording)
 	{
 		StopRecording();
-		UE_LOG(LogTemp, Log, TEXT("[PROFILER] PIE ended, auto-stopped runtime profiler recording"));
-	}
-	else if (CurrentState == ERecordingState::Recording)
-	{
-		UE_LOG(LogTemp, Log, TEXT("[PROFILER] PIE ended, runtime profiler still recording (auto-stop disabled)"));
-	}
-	else
-	{
-		UE_LOG(LogTemp, Log, TEXT("[PROFILER] PIE ended, runtime profiler was not recording (CurrentState: %d)"), (int32)CurrentState);
 	}
 }
 
 void FRuntimeProfiler::InitializeBlueprintInstrumentation()
 {
-	// Initialize blueprint core delegates for instrumentation
-	// Note: This is a simplified implementation as FBlueprintCoreDelegates may not be available in all UE versions
-	UE_LOG(LogTemp, Log, TEXT("Blueprint instrumentation initialized"));
 }
 
 void FRuntimeProfiler::CleanupBlueprintInstrumentation()
@@ -738,13 +663,10 @@ void FRuntimeProfiler::CleanupBlueprintInstrumentation()
 		{
 			FBlueprintCoreDelegates::OnScriptProfilingEvent.Remove(InstrumentationDelegateHandle);
 			InstrumentationDelegateHandle.Reset();
-			UE_LOG(LogTemp, Log, TEXT("Unbound from OnScriptProfilingEvent during cleanup"));
 		}
 
 		bIsInstrumentationEnabled = false;
 	}
-
-	UE_LOG(LogTemp, Log, TEXT("Blueprint instrumentation cleaned up"));
 }
 
 void FRuntimeProfiler::EnableBlueprintInstrumentation()
@@ -752,7 +674,6 @@ void FRuntimeProfiler::EnableBlueprintInstrumentation()
 	// 如果已经启用了，不要重复绑定
 	if (bIsInstrumentationEnabled)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[PROFILER] Blueprint instrumentation already enabled, skipping"));
 		return;
 	}
 
@@ -765,7 +686,6 @@ void FRuntimeProfiler::EnableBlueprintInstrumentation()
 	if (BlueprintInstrumentationCV)
 	{
 		BlueprintInstrumentationCV->Set(1, ECVF_SetByCode);
-		UE_LOG(LogTemp, Warning, TEXT("Forced bp.EnableInstrumentation = 1 for profiling"));
 	}
 	else
 	{
