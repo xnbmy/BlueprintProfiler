@@ -70,6 +70,10 @@ Linux
 
 中文（简体）
 
+视频教程
+
+【虚幻5蓝图性能分析插件】 https://www.bilibili.com/video/BV1R1cuziExS/?share_source=copy_web&vd_source=0eb031aa73b7212bb341b0a10336c867
+
 支持
 
 如需支持和更新，请访问：https://space.bilibili.com/13578876
