@@ -48,16 +48,16 @@ struct BLUEPRINTPROFILER_API FNodeExecutionStats
 {
 	GENERATED_BODY()
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Execution Stats")
 	int32 ExecutionCount = 0;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Execution Stats")
 	float TotalExecutionTime = 0.0f;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Execution Stats")
 	float MinExecutionTime = FLT_MAX;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Execution Stats")
 	float MaxExecutionTime = 0.0f;
 
 	TArray<float> ExecutionTimes;
@@ -89,25 +89,25 @@ struct BLUEPRINTPROFILER_API FNodeExecutionData
 	// UPROPERTY(BlueprintReadOnly) removed as TWeakObjectPtr is not supported in Blueprints
 	TWeakObjectPtr<UObject> BlueprintObject;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Node Data")
 	FString NodeName;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Node Data")
 	FString BlueprintName;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Node Data")
 	FGuid NodeGuid;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Node Data")
 	int32 TotalExecutions = 0;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Node Data")
 	float AverageExecutionsPerSecond = 0.0f;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Node Data")
 	float TotalExecutionTime = 0.0f;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Node Data")
 	float AverageExecutionTime = 0.0f;
 };
 
@@ -122,19 +122,19 @@ struct BLUEPRINTPROFILER_API FHotNodeInfo
 	// UPROPERTY(BlueprintReadOnly) removed as TWeakObjectPtr is not supported in Blueprints
 	TWeakObjectPtr<UObject> BlueprintObject;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Hot Node")
 	FGuid NodeGuid;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Hot Node")
 	FString NodeName;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Hot Node")
 	float ExecutionsPerSecond = 0.0f;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Hot Node")
 	float AverageExecutionTime = 0.0f;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Hot Node")
 	ESeverity Severity = ESeverity::Low;
 };
 
@@ -149,16 +149,16 @@ struct BLUEPRINTPROFILER_API FTickAbuseInfo
 	// UPROPERTY(BlueprintReadOnly) removed as TWeakObjectPtr is not supported in Blueprints
 	TWeakObjectPtr<UObject> BlueprintObject;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Tick Abuse")
 	FString ActorName;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Tick Abuse")
 	FString BlueprintName;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Tick Abuse")
 	int32 ComplexityScore = 0;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Tick Abuse")
 	ESeverity Severity = ESeverity::Low;
 };
 
@@ -170,22 +170,22 @@ struct BLUEPRINTPROFILER_API FLintIssue
 {
 	GENERATED_BODY()
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Lint Issue")
 	ELintIssueType Type = ELintIssueType::DeadNode;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Lint Issue")
 	FString BlueprintPath;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Lint Issue")
 	FString NodeName;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Lint Issue")
 	FString Description;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Lint Issue")
 	ESeverity Severity = ESeverity::Low;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Lint Issue")
 	FGuid NodeGuid;
 };
 
@@ -203,16 +203,16 @@ struct BLUEPRINTPROFILER_API FLargeResourceReference
 	// UPROPERTY(BlueprintReadOnly) removed as TWeakObjectPtr is not supported in Blueprints
 	TWeakObjectPtr<UObject> ReferencedAsset;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Resource Reference")
 	FString VariableName;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Resource Reference")
 	float AssetSize = 0.0f;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Resource Reference")
 	FString AssetType;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Resource Reference")
 	FString ReferencePath;
 
 	// Equality operator for TArray operations (Find, AddUnique, etc.)
@@ -234,10 +234,10 @@ struct BLUEPRINTPROFILER_API FReferenceChain
 
 	TArray<TWeakObjectPtr<UObject>> Chain;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Reference Chain")
 	float TotalSize = 0.0f;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Reference Chain")
 	FString Description;
 };
 
@@ -249,13 +249,13 @@ struct BLUEPRINTPROFILER_API FMemoryAnalysisResult
 {
 	GENERATED_BODY()
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Memory Analysis")
 	float InclusiveSize = 0.0f;           // 包含大小(MB)
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Memory Analysis")
 	int32 ReferenceDepth = 0;             // 引用深度
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Memory Analysis")
 	int32 TotalReferences = 0;            // 总引用数
 
 	TArray<FReferenceChain> ReferenceChains;
@@ -270,28 +270,28 @@ struct BLUEPRINTPROFILER_API FRecordingSession
 {
 	GENERATED_BODY()
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Recording Session")
 	FString SessionName;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Recording Session")
 	FDateTime StartTime;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Recording Session")
 	FDateTime EndTime;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Recording Session")
 	float Duration = 0.0f; // In seconds
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Recording Session")
 	int32 TotalNodesRecorded = 0;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Recording Session")
 	int32 TotalExecutions = 0;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Recording Session")
 	bool bIsActive = false;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Recording Session")
 	bool bAutoStarted = false; // Whether this session was auto-started by PIE
 
 	FRecordingSession()
@@ -358,22 +358,22 @@ struct BLUEPRINTPROFILER_API FAssetReferenceCount
 {
 	GENERATED_BODY()
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Asset Reference Count")
 	FString AssetPath;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Asset Reference Count")
 	FString AssetName;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Asset Reference Count")
 	FString AssetType;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Asset Reference Count")
 	int32 ReferenceCount = 0;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Asset Reference Count")
 	float AssetSize = 0.0f;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "Asset Reference Count")
 	TArray<FString> ReferencedBy;
 
 	// For sorting: higher reference count = more shared asset

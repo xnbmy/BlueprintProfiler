@@ -349,6 +349,18 @@ void FStaticLinter::DetectOrphanNodes(UBlueprint* Blueprint, TArray<FLintIssue>&
 				continue;
 			}
 
+			// Skip tunnel nodes (macro entry/exit nodes) - they are entry points in macro graphs
+			// Use class name check to avoid including K2Node_Tunnel.h which may cause build issues
+			FString NodeClassName = Node->GetClass()->GetName();
+			if (NodeClassName.Contains(TEXT("K2Node_Tunnel")))
+			{
+				// Tunnel nodes in macro graphs act as entry/exit points and should not be flagged as orphans
+				continue;
+			}
+
+			// Store class name for later use (avoid redefinition)
+			const FString& NodeClassNameRef = NodeClassName;
+
 			// Check for pure nodes (computation nodes) without execution connections
 			if (UK2Node* K2Node = Cast<UK2Node>(Node))
 			{
@@ -464,50 +476,80 @@ void FStaticLinter::DetectOrphanNodes(UBlueprint* Blueprint, TArray<FLintIssue>&
 					{
 						bShouldSkip = true;
 					}
-					// 3. 跳过接口相关节点（通常是输入事件或增强输入节点）
-					// 这些节点名称通常包含特定关键词
-					else if (NodeTitle.Contains(TEXT("Thumbstick")) ||
-						NodeTitle.Contains(TEXT("Touch")) ||
-						NodeTitle.Contains(TEXT("Input Action")) ||
-						NodeTitle.Contains(TEXT("Input Axis")) ||
-						NodeTitle.Contains(TEXT("Enhanced Input")) ||
-						NodeTitle.Contains(TEXT("IA_")) ||  // Input Action 缩写
-						NodeTitle.Contains(TEXT("IM_")))
+					// 3. 跳过输入操作节点（Input Action）- 这些是由输入系统触发的事件节点
+				// 包括增强输入系统(Enhanced Input)和传统输入系统的输入操作
+				else if (NodeTitle.Contains(TEXT("Thumbstick")) ||
+					NodeTitle.Contains(TEXT("Touch")) ||
+					NodeTitle.Contains(TEXT("Input Action")) ||
+					NodeTitle.Contains(TEXT("Input Axis")) ||
+					NodeTitle.Contains(TEXT("Enhanced Input")) ||
+					NodeTitle.Contains(TEXT("IA_")) ||  // Input Action 缩写
+					NodeTitle.Contains(TEXT("IM_")) ||
+					NodeTitle.Contains(TEXT("输入操作")) ||  // 中文：输入操作
+					NodeTitle.Contains(TEXT("Pressed")) ||  // 输入按下事件
+					NodeTitle.Contains(TEXT("Released")) ||  // 输入释放事件
+					NodeTitle.Contains(TEXT("Key")))  // 按键事件
+				{
+					bShouldSkip = true;
+				}
+				// 4. 检查节点类型 - 如果是输入操作节点类也跳过
+				else
+				{
+					if (NodeClassNameRef.Contains(TEXT("Input")) ||
+						NodeClassNameRef.Contains(TEXT("EnhancedInput")))
 					{
 						bShouldSkip = true;
 					}
+				}
 
 					// 如果不应该跳过，再检查执行引脚连接状态
-					if (!bShouldSkip)
-					{
-						bool bHasExecInputConnected = false;
-						bool bHasExecOutputConnected = false;
-						bool bHasExecutionPins = false;
+				if (!bShouldSkip)
+				{
+					bool bHasExecInput = false;
+					bool bHasExecInputConnected = false;
+					bool bHasExecOutput = false;
+					bool bHasExecOutputConnected = false;
+					bool bHasExecutionPins = false;
 
-						// 检查所有执行引脚的连接状态
-						for (UEdGraphPin* Pin : Node->Pins)
+					// 检查所有执行引脚的连接状态
+					for (UEdGraphPin* Pin : Node->Pins)
+					{
+						if (Pin && Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec)
 						{
-							if (Pin && Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec)
+							bHasExecutionPins = true;
+							if (Pin->Direction == EGPD_Input)
 							{
-								bHasExecutionPins = true;
-								if (Pin->Direction == EGPD_Input && Pin->LinkedTo.Num() > 0)
+								bHasExecInput = true;
+								if (Pin->LinkedTo.Num() > 0)
 								{
 									bHasExecInputConnected = true;
 								}
-								else if (Pin->Direction == EGPD_Output && Pin->LinkedTo.Num() > 0)
+							}
+							else if (Pin->Direction == EGPD_Output)
+							{
+								bHasExecOutput = true;
+								if (Pin->LinkedTo.Num() > 0)
 								{
 									bHasExecOutputConnected = true;
 								}
 							}
 						}
+					}
 
-						// 当输入执行引脚未连接时报告（输出引脚连接不影响）
-						// 这会正确跳过：
-						// - Event 节点（没有输入但有输出）- 已在上面跳过
-						// - 正常连接的节点（输入已连接）
-						// 会报告：
-						// - Orphan node (input not connected, regardless of output connection)
-						if (bHasExecutionPins && !bHasExecInputConnected)
+					// 5. 自动检测入口节点：如果节点有执行输出但没有执行输入，说明是入口节点（如事件、输入操作等）
+					if (bHasExecOutput && !bHasExecInput)
+					{
+						// 这是入口节点，不需要上游连接
+						bShouldSkip = true;
+					}
+
+					// 当输入执行引脚未连接时报告（输出引脚连接不影响）
+					// 这会正确跳过：
+					// - Event 节点（没有输入但有输出）- 已在上面跳过
+					// - 正常连接的节点（输入已连接）
+					// 会报告：
+					// - Orphan node (input not connected, regardless of output connection)
+					if (!bShouldSkip && bHasExecutionPins && bHasExecInput && !bHasExecInputConnected)
 						{
 							FLintIssue Issue;
 							Issue.Type = ELintIssueType::OrphanNode;
@@ -932,6 +974,114 @@ void FStaticLinter::DetectUnusedFunctions(UBlueprint* Blueprint, TArray<FLintIss
 		}
 		Issue.Severity = ESeverity::Medium; // 未引用的函数是中等严重度
 		Issue.NodeGuid = FGuid(); // 函数图没有 NodeGuid，留空
+
+		OutIssues.Add(Issue);
+	}
+
+	// ========== 检查未引用的宏 ==========
+	// 收集所有被引用的宏
+	TSet<FName> ReferencedMacros;
+	for (const FAssetData& AssetData : AllBlueprintAssets)
+	{
+		UBlueprint* BP = Cast<UBlueprint>(AssetData.GetAsset());
+		if (!BP)
+		{
+			continue;
+		}
+
+		TArray<UEdGraph*> AllGraphs = GetAllGraphs(BP);
+		for (UEdGraph* Graph : AllGraphs)
+		{
+			if (!Graph)
+			{
+				continue;
+			}
+
+			for (UEdGraphNode* Node : Graph->Nodes)
+			{
+				if (UK2Node_MacroInstance* MacroInstance = Cast<UK2Node_MacroInstance>(Node))
+				{
+					// 获取被引用的宏图
+					UEdGraph* ReferencedMacroGraph = MacroInstance->GetMacroGraph();
+					if (ReferencedMacroGraph)
+					{
+						ReferencedMacros.Add(ReferencedMacroGraph->GetFName());
+					}
+				}
+			}
+		}
+	}
+
+	// 检查当前 Blueprint 的宏是否被引用
+	for (UEdGraph* MacroGraph : Blueprint->MacroGraphs)
+	{
+		if (!MacroGraph)
+		{
+			continue;
+		}
+
+		FName MacroName = MacroGraph->GetFName();
+		FString MacroNameStr = MacroName.ToString();
+
+		// 跳过引擎自带的宏（通常以特定前缀开头）
+		if (MacroNameStr.StartsWith(TEXT("K2_")) ||
+			MacroNameStr.StartsWith(TEXT("Default__")))
+		{
+			continue;
+		}
+
+		// 检查宏是否被引用
+		bool bIsMacroReferenced = ReferencedMacros.Contains(MacroName);
+
+		// 也检查是否在当前 Blueprint 中被引用
+		if (!bIsMacroReferenced)
+		{
+			TArray<UEdGraph*> AllGraphs = GetAllGraphs(Blueprint);
+			for (UEdGraph* Graph : AllGraphs)
+			{
+				if (!Graph)
+				{
+					continue;
+				}
+
+				for (UEdGraphNode* Node : Graph->Nodes)
+				{
+					if (UK2Node_MacroInstance* MacroInstance = Cast<UK2Node_MacroInstance>(Node))
+					{
+						if (MacroInstance->GetMacroGraph() == MacroGraph)
+						{
+							bIsMacroReferenced = true;
+							break;
+						}
+					}
+				}
+				if (bIsMacroReferenced)
+				{
+					break;
+				}
+			}
+		}
+
+		if (bIsMacroReferenced)
+		{
+			continue;  // 宏被引用，跳过
+		}
+
+		// 宏未被引用，报告问题
+		FLintIssue Issue;
+		Issue.Type = ELintIssueType::UnusedFunction;
+		Issue.BlueprintPath = Blueprint->GetPathName();
+		Issue.NodeName = MacroNameStr;
+		if (FBlueprintProfilerLocalization::IsChinese())
+		{
+			Issue.Description = FString::Printf(TEXT("宏 '%s' 已定义但从未被使用"), *MacroNameStr);
+		}
+		else
+		{
+			Issue.Description = FString::Printf(TEXT("Macro '%s' is defined but never used"), *MacroNameStr);
+		}
+		Issue.Severity = ESeverity::Low; // 未引用的宏是低严重度
+		Issue.NodeGuid = FGuid(); // 宏图没有 NodeGuid，留空
 
 		OutIssues.Add(Issue);
 	}
