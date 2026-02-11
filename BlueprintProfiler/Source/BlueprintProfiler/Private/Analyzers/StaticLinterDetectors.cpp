@@ -768,55 +768,84 @@ void FStaticLinter::DetectUnusedFunctions(UBlueprint* Blueprint, TArray<FLintIss
 			for (UEdGraphNode* Node : Graph->Nodes)
 			{
 				if (UK2Node_CallFunction* CallFuncNode = Cast<UK2Node_CallFunction>(Node))
+			{
+				FName FunctionName = CallFuncNode->FunctionReference.GetMemberName();
+				if (FunctionName != NAME_None)
+				{
+					ReferencedFunctions.Add(FunctionName);
+					FunctionCallCount.FindOrAdd(FunctionName)++;
+				}
+				
+				// 也记录函数引用的完整路径（包含类名），用于跨蓝图引用检测
+				FString FullFunctionPath = CallFuncNode->FunctionReference.GetMemberParentClass() ? 
+					CallFuncNode->FunctionReference.GetMemberParentClass()->GetName() + TEXT(".") + FunctionName.ToString() :
+					FunctionName.ToString();
+				if (!FullFunctionPath.IsEmpty())
+				{
+					ReferencedFunctions.Add(FName(*FullFunctionPath));
+				}
+
+				// 检查 SetTimer 节点 - 通过函数名字符串引用函数
+				// 检查是否是 SetTimer 相关函数（包括设置、清除、暂停、获取等所有定时器操作）
+				if (FunctionName.ToString().StartsWith(TEXT("K2_SetTimer")) ||
+					FunctionName.ToString().StartsWith(TEXT("K2_ClearTimer")) ||
+					FunctionName.ToString().StartsWith(TEXT("K2_PauseTimer")) ||
+					FunctionName.ToString().StartsWith(TEXT("K2_UnPauseTimer")) ||
+					FunctionName.ToString().StartsWith(TEXT("K2_IsTimer")) ||
+					FunctionName.ToString().StartsWith(TEXT("K2_GetTimer")) ||
+					FunctionName.ToString().StartsWith(TEXT("K2_DoesTimer")))
+				{
+					UE_LOG(LogTemp, Log, TEXT("找到 Timer 节点: %s"), *FunctionName.ToString());
+					// 查找 FunctionName 引脚
+					for (UEdGraphPin* Pin : Node->Pins)
 					{
-						FName FunctionName = CallFuncNode->FunctionReference.GetMemberName();
-						if (FunctionName != NAME_None)
+						FString PinNameStr = Pin->PinName.ToString();
+						UE_LOG(LogTemp, Log, TEXT("  引脚: %s, 类型: %s"), *PinNameStr, *Pin->PinType.PinCategory.ToString());
+						if (Pin && PinNameStr == TEXT("FunctionName") && Pin->LinkedTo.Num() == 0)
 						{
-							ReferencedFunctions.Add(FunctionName);
-							FunctionCallCount.FindOrAdd(FunctionName)++;
-						}
-						
-						// 也记录函数引用的完整路径（包含类名），用于跨蓝图引用检测
-						FString FullFunctionPath = CallFuncNode->FunctionReference.GetMemberParentClass() ? 
-							CallFuncNode->FunctionReference.GetMemberParentClass()->GetName() + TEXT(".") + FunctionName.ToString() :
-							FunctionName.ToString();
-						if (!FullFunctionPath.IsEmpty())
-						{
-							ReferencedFunctions.Add(FName(*FullFunctionPath));
+							// 获取函数名字符串值（使用 DefaultValue）
+							FString TimerFunctionName = Pin->DefaultValue;
+							UE_LOG(LogTemp, Log, TEXT("  找到 FunctionName 引脚, 值: '%s'"), *TimerFunctionName);
+							if (!TimerFunctionName.IsEmpty())
+							{
+								ReferencedFunctions.Add(FName(*TimerFunctionName));
+								UE_LOG(LogTemp, Log, TEXT("检测到 Timer 引用函数: %s (节点: %s)"), *TimerFunctionName, *FunctionName.ToString());
+							}
 						}
 					}
-				// 也检查自定义事件调用
-				else if (UK2Node_CustomEvent* CustomEventNode = Cast<UK2Node_CustomEvent>(Node))
-				{
-					// 自定义事件可能被其他节点通过 GUID 调用
 				}
-				// 检查事件分发器绑定 - 这是跨蓝图引用的重要来源
-				else if (UK2Node_BaseMCDelegate* DelegateNode = Cast<UK2Node_BaseMCDelegate>(Node))
+			}
+			// 也检查自定义事件调用
+			else if (UK2Node_CustomEvent* CustomEventNode = Cast<UK2Node_CustomEvent>(Node))
+			{
+				// 自定义事件可能被其他节点通过 GUID 调用
+			}
+			// 检查事件分发器绑定 - 这是跨蓝图引用的重要来源
+			else if (UK2Node_BaseMCDelegate* DelegateNode = Cast<UK2Node_BaseMCDelegate>(Node))
+			{
+				FName DelegateName = DelegateNode->GetPropertyName();
+				if (DelegateName != NAME_None)
 				{
-					FName DelegateName = DelegateNode->GetPropertyName();
-					if (DelegateName != NAME_None)
+					ReferencedFunctions.Add(DelegateName);
+					
+					// 对于 AddDelegate 和 AssignDelegate，还要记录被绑定的自定义事件
+					if (Cast<UK2Node_AddDelegate>(Node) || Cast<UK2Node_AssignDelegate>(Node))
 					{
-						ReferencedFunctions.Add(DelegateName);
-						
-						// 对于 AddDelegate 和 AssignDelegate，还要记录被绑定的自定义事件
-						if (Cast<UK2Node_AddDelegate>(Node) || Cast<UK2Node_AssignDelegate>(Node))
+						// 使用 GetDelegatePin() 获取委托输入引脚
+						UEdGraphPin* DelegatePin = DelegateNode->GetDelegatePin();
+						if (DelegatePin && DelegatePin->LinkedTo.Num() > 0)
 						{
-							// 使用 GetDelegatePin() 获取委托输入引脚
-							UEdGraphPin* DelegatePin = DelegateNode->GetDelegatePin();
-							if (DelegatePin && DelegatePin->LinkedTo.Num() > 0)
+							for (UEdGraphPin* LinkedPin : DelegatePin->LinkedTo)
 							{
-								for (UEdGraphPin* LinkedPin : DelegatePin->LinkedTo)
+								if (LinkedPin && LinkedPin->GetOwningNode())
 								{
-									if (LinkedPin && LinkedPin->GetOwningNode())
+									UEdGraphNode* ConnectedNode = LinkedPin->GetOwningNode();
+									if (UK2Node_CustomEvent* BoundEvent = Cast<UK2Node_CustomEvent>(ConnectedNode))
 									{
-										UEdGraphNode* ConnectedNode = LinkedPin->GetOwningNode();
-										if (UK2Node_CustomEvent* BoundEvent = Cast<UK2Node_CustomEvent>(ConnectedNode))
+										FName EventName = BoundEvent->GetFunctionName();
+										if (EventName != NAME_None)
 										{
-											FName EventName = BoundEvent->GetFunctionName();
-											if (EventName != NAME_None)
-											{
-												ReferencedFunctions.Add(EventName);
-											}
+											ReferencedFunctions.Add(EventName);
 										}
 									}
 								}
@@ -824,6 +853,7 @@ void FStaticLinter::DetectUnusedFunctions(UBlueprint* Blueprint, TArray<FLintIss
 						}
 					}
 				}
+			}
 			}
 		}
 	}
@@ -946,6 +976,16 @@ void FStaticLinter::DetectUnusedFunctions(UBlueprint* Blueprint, TArray<FLintIss
 		// 6. 使用虚幻引擎原生的引用检测机制检查函数是否被引用
 		// FBlueprintEditorUtils::IsFunctionUsed 会自动搜索当前蓝图和所有引用该蓝图的其他蓝图
 		bool bIsReferenced = FBlueprintEditorUtils::IsFunctionUsed(Blueprint, FunctionName);
+
+		// 7. 检查我们自己收集的引用列表（包括 SetTimer 等通过函数名字符串的引用）
+		if (!bIsReferenced)
+		{
+			bIsReferenced = ReferencedFunctions.Contains(FunctionName);
+			if (bIsReferenced)
+			{
+				UE_LOG(LogTemp, Log, TEXT("函数 '%s' 通过自定义引用检测找到"), *FunctionNameStr);
+			}
+		}
 
 		// 调试：输出未引用的函数名
 		if (!bIsReferenced)
