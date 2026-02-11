@@ -795,21 +795,16 @@ void FStaticLinter::DetectUnusedFunctions(UBlueprint* Blueprint, TArray<FLintIss
 					FunctionName.ToString().StartsWith(TEXT("K2_GetTimer")) ||
 					FunctionName.ToString().StartsWith(TEXT("K2_DoesTimer")))
 				{
-					UE_LOG(LogTemp, Log, TEXT("找到 Timer 节点: %s"), *FunctionName.ToString());
 					// 查找 FunctionName 引脚
 					for (UEdGraphPin* Pin : Node->Pins)
 					{
-						FString PinNameStr = Pin->PinName.ToString();
-						UE_LOG(LogTemp, Log, TEXT("  引脚: %s, 类型: %s"), *PinNameStr, *Pin->PinType.PinCategory.ToString());
-						if (Pin && PinNameStr == TEXT("FunctionName") && Pin->LinkedTo.Num() == 0)
+						if (Pin && Pin->PinName.ToString() == TEXT("FunctionName") && Pin->LinkedTo.Num() == 0)
 						{
-							// 获取函数名字符串值（使用 DefaultValue）
+							// 获取函数名字符串值
 							FString TimerFunctionName = Pin->DefaultValue;
-							UE_LOG(LogTemp, Log, TEXT("  找到 FunctionName 引脚, 值: '%s'"), *TimerFunctionName);
 							if (!TimerFunctionName.IsEmpty())
 							{
 								ReferencedFunctions.Add(FName(*TimerFunctionName));
-								UE_LOG(LogTemp, Log, TEXT("检测到 Timer 引用函数: %s (节点: %s)"), *TimerFunctionName, *FunctionName.ToString());
 							}
 						}
 					}
@@ -981,17 +976,6 @@ void FStaticLinter::DetectUnusedFunctions(UBlueprint* Blueprint, TArray<FLintIss
 		if (!bIsReferenced)
 		{
 			bIsReferenced = ReferencedFunctions.Contains(FunctionName);
-			if (bIsReferenced)
-			{
-				UE_LOG(LogTemp, Log, TEXT("函数 '%s' 通过自定义引用检测找到"), *FunctionNameStr);
-			}
-		}
-
-		// 调试：输出未引用的函数名
-		if (!bIsReferenced)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("未引用函数: %s (在 Blueprint: %s)"), *FunctionNameStr, *Blueprint->GetName());
-			UE_LOG(LogTemp, Warning, TEXT("  ReferencedFunctions 包含此函数: %d"), ReferencedFunctions.Contains(FunctionName));
 		}
 
 		if (bIsReferenced)
