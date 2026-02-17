@@ -1,3 +1,5 @@
+// Copyright xnbmy 2026. All Rights Reserved.
+
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
 #include "Analyzers/MemoryAnalyzer.h"

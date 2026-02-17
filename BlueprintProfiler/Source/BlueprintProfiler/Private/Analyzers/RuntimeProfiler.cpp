@@ -1,3 +1,5 @@
+// Copyright xnbmy 2026. All Rights Reserved.
+
 #include "Analyzers/RuntimeProfiler.h"
 #include "Engine/Blueprint.h"
 #include "EdGraph/EdGraph.h"

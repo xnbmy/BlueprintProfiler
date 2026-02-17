@@ -1,3 +1,5 @@
+// Copyright xnbmy 2026. All Rights Reserved.
+
 #include "Analyzers/StaticLinter.h"
 #include "Async/Async.h"
 #include "HAL/PlatformProcess.h"

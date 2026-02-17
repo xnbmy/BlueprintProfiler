@@ -1,3 +1,5 @@
+// Copyright xnbmy 2026. All Rights Reserved.
+
 #include "UI/SBlueprintProfilerWidget.h"
 #include "BlueprintProfilerLocalization.h"
 #include "Widgets/Layout/SBorder.h"

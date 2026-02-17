@@ -1,3 +1,5 @@
+// Copyright xnbmy 2026. All Rights Reserved.
+
 #include "BlueprintProfilerLocalization.h"
 #include "Internationalization/Internationalization.h"
 #include "Internationalization/Culture.h"

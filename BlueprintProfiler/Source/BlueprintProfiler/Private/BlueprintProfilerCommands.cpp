@@ -1,3 +1,5 @@
+// Copyright xnbmy 2026. All Rights Reserved.
+
 #include "BlueprintProfilerCommands.h"
 
 #define LOCTEXT_NAMESPACE "BlueprintProfiler"

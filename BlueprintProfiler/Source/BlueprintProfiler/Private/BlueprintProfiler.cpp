@@ -1,3 +1,5 @@
+// Copyright xnbmy 2026. All Rights Reserved.
+
 #include "BlueprintProfiler.h"
 #include "BlueprintProfilerStyle.h"
 #include "BlueprintProfilerCommands.h"

@@ -1,3 +1,5 @@
+// Copyright xnbmy 2026. All Rights Reserved.
+
 #include "Analyzers/MemoryAnalyzer.h"
 #include "Engine/Blueprint.h"
 #include "Engine/Texture2D.h"
